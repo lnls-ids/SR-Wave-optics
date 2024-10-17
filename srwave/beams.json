@@ -1,0 +1,26 @@
+{
+    "carcara": {
+        "twiss": {
+            "sigEperE": 8.511e-4,
+            "emitx": 2.4786e-10,
+            "betax": 1.6698,
+            "alphax": 2.9279,
+            "etax": 1.7869e-4,
+            "etaxp": 3.2393e-3,
+            "emity": 4.7221e-12,
+            "betay": 26.8063,
+            "alphay": -6.5644,
+            "etay": 4.7404e-3,
+            "etayp": 1.1985e-3
+        },
+        "rms": {
+            "sigEperE": 8.511e-4,
+            "sigrx":  20.176e-06,
+            "sigxp": 37.355e-06,
+            "rxpx":  -7.0991e-10,
+            "sigry":  16.901e-06,
+            "sigyp": 4.0969e-06,
+            "rypy":   6.8793e-11
+        }
+    }
+}
