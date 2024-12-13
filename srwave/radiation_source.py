@@ -1,328 +1,72 @@
 
-import os
-import sys
 import json
 import typing
-from array import array
-from copy import deepcopy
+import copy
 
 import numpy as np
-import scipy.constants as cte
+
 
 from . import utils as uti
-
-from optlnls.mirror import transmission
-from optlnls.surface import SRW_figure_error
+from . import opt_elements as oe
+from .beamtemp import Beam
 
 import srwpy.srwlib as srw
 import srwpy.srwlpy as srwl
 
 
-# fundamental constants
-_c = cte.c # speed of light [m/s]
-_e = cte.e # fundamental charge [C]
-_me = cte.electron_mass # electron rest mass [kg]
-_E0 = _me*(_c**2)/_e # electron rest energy [eV]
-
-# accelerator constants
-_I = 0.1 # current [A]
-_E = 3e9 # energy [eV]
-_gamma = _E/_E0 # lorentz factor [adim]
 
 
-# srw propagators dict
-_propagators = {'Standard':0,
-                'Quadratic':1, 'Quadratic Special':2,
-                'From Waist':3, 'To Waist':4}
-_type_propas = typing.Literal['Standard',
-                              'Quadratic','Quadratic Special',
-                              'From Waist','To Waist']
+class Beamline:
 
-# types for calculations
-_beam_type = typing.Union[srw.SRWLPartBeam,None]
-_part_type = typing.Literal['re','im']
-_pol_type = typing.Literal['linH','linV','lin45','lin135','circR','circL','total']
-_intens_type = typing.Literal['SE','ME','SE Fluence']
-# _coords = typing.Literal['e','x','y','xy','ex','ey','exy']
+    def __init__(self,line=None):
 
-
-#todo: mudar E_ph para energy para fazer sentido aceitar um range de energias
-#todo: testar se classes e propagacoes e coisas do srw funcionam sem array module, so' list python ou numpy array
-
-
-
-class Beam(srw.SRWLPartBeam):
-
-    def __init__(self,I=_I,E=_E,isTwiss=True,eqparams=None,*args,**kwargs):
-        """
-        Electron Beam.
-
-        Args:
-            isTwiss (bool): twiss parameters are given or rms are given.
-            eqparams (list): beam equilibrium parameters:
-                isTwiss=True:
-                    [0]:  sigEperE; relative RMS energy spread
-                    [1]:  emitx; horizontal emittance [m.rad]
-                    [2]:  betax; horizontal beta [m]
-                    [3]:  alphax; horizontal alpha [rad]
-                    [4]:  etax; horizontal dispersion [rad]
-                    [5]:  etapx; horizontal dispersion derivative [rad/m]
-                    [6]:  emity; vertical emittance [m.rad]
-                    [7]:  betay; vertical beta [m]
-                    [8]:  alphay; vertical alpha [rad]
-                    [9]:  etay; vertical dispersion [rad]
-                    [10]: etapy; vertical dispersion derivative [rad/m]
-                isTwiss=False:
-                    [0]: sigEperE; relative RMS energy spread
-                    [1]: sig_rx; horizontal RMS size of e-beam [m]
-                    [2]: sig_px; horizontal RMS angular divergence [rad]
-                    [3]: rxpx; <(rx-<rx>)(px-<px>)>; horizontal crossed second moment [m.rad]
-                    [4]: sig_ry; vertical RMS size of e-beam [m]
-                    [5]: sig_py; vertical RMS angular divergence [rad]
-                    [6]: rypy; <(ry-<ry>)(py-<py>)>; vertical crossed second moment [m.rad]
-        """
+        self.wfr = None 
         
-        super().__init__(*args,**kwargs)
-
-        if eqparams is None:
-            self.Iavg = I
-            self.partStatMom1.gamma = _gamma
-        elif isTwiss:
-            self.from_Twiss(I,E,*eqparams)
-        else:
-            self.from_RMS(I,E,*eqparams)
-
-    def __str__(self):
-        print('Beam')
-        print('Iavg =',f'{self.Iavg*1e3} mA')
-        print('E =',f'{self.partStatMom1.gamma*_E0*1e-9} GeV')
-        print(r'$\delta =$',f'{self.arStatMom2[10]}')
-        print('')
-
-    def __repr__(self):
-        pass
+        self.opt_elements = line
 
 
-#todo: tirar elementos da beamline
-# class OptElements:
-
-
-class BeamLine(srw.SRWLOptC):
-
-    propagators = _propagators
-
-    #todo: definicao alternativa que insere os opt elements direto no init
-    def __init__(self,*args,**kwargs):
-
-        super().__init__(*args,**kwargs)
-
-
-
-    def Drift(self,dist,propagator:_type_propas,rs,ra,re):
-        p = self.propagators[propagator]
-
-        opt_element = srw.SRWLOptD(dist)
-
-        prop_params = [rs,   #"Auto Resize Before Propagation" 
-                       0,    #"Auto Resize After Propagation" 
-                       1.0,  #"Relative precision for propagation with autoresizing"
-                       p, #"Propagator" (check propagators dict)
-                       0,    #"Do any resizing..."? (0: False, 1: True)
-                       ra, #"H range modification factor at resizing"
-                       re, #"H resolution modification factor at resizing"
-                       ra, #"V range modification factor at resizing"
-                       re, #"V resolution modification factor at resizing"
-                       0,    # mysterios parameter 1
-                       0.0,  # mysterios parameter 2
-                       0.0]  # mysterios parameter 3
-
-        return opt_element, prop_params
-
-    Screen = Drift
-
-    #todo: redefinir classe do filtro para aceitar nx=ny=1
-    @staticmethod
-    def Filter(energy,thickness,density,material):
-
-        if not isinstance(energy, (list,np.ndarray)): energy = [energy]
-
-        transmE = np.sqrt(transmission(energy, thickness, density, material))
-        arr_transm = np.array(120*120*[[t,0] for t in transmE]).reshape(-1)
-        # arr_transm =  array('d',120*120*[np.sqrt(transm),0])
-
-        #todo: comment meaning of params
-        opt_element = srw.SRWLOptT(
-            _x = 0.0, _rx = 200e-6, _nx = 120, # x center and range
-            _y = 0.0, _ry = 200e-6, _ny = 120, # y center and range
-            _arTr = arr_transm, # transmission array
-            _extTr = 1,
-            _eStart=energy[0], _eFin=energy[-1], _ne=len(energy) # energy range
-        )
-        
-        prop_params = [0,   #"Auto Resize Before Propagation" 
-                       0,   #"Auto Resize After Propagation" 
-                       1.0, #"Relative precision for propagation with autoresizing"
-                       0,   #"Propagator" (check propagators dict)
-                       0,   #"Do any resizing..."? (0: False, 1: True)
-                       1.0, #"H range modification factor at resizing"
-                       1.0, #"H resolution modification factor at resizing"
-                       1.0, #"V range modification factor at resizing"
-                       1.0, #"V resolution modification factor at resizing"
-                       0,   # mysterios parameter 1
-                       0.0, # mysterios parameter 2
-                       0.0] # mysterios parameter 3
-                            # optional parameters 1 to 5 (not included, all are 0)
-
-        return opt_element, prop_params
-
-    @staticmethod
-    def Aperture(a,b,xc=0.0,yc=0.0,ra_a=1.0,re_a=1.0):
-
-        opt_element = srw.SRWLOptA(_shape = 'r', #'r': rectangle
-                                   _ap_or_ob = 'a', #'a': aperture
-                                   _Dx = 2*a, #"Width [m]"
-                                   _Dy = 2*b, #"Height [m]"
-                                   _x = xc, # horizontal center [m]
-                                   _y = yc) # vertical center [m]
-
-        prop_params = [0,   #"Auto Resize Before Propagation" 
-                       0,   #"Auto Resize After Propagation" 
-                       1.0, #"Relative precision for propagation with autoresizing"
-                       0,   #"Propagator" (check propagators dict)
-                       0,   #"Do any resizing..."? (0: False, 1: True)
-                       ra_a, #"H range modification factor at resizing"
-                       re_a, #"H resolution modification factor at resizing"
-                       ra_a, #"V range modification factor at resizing"
-                       re_a, #"V resolution modification factor at resizing"
-                       0,   # mysterios parameter 1
-                       0.0, # mysterios parameter 2
-                       0.0] # mysterios parameter 3
-                            # optional parameters 1 to 5 (not included, all are 0)
-
-        # carcara mirror: 'Standard', ra=8, re=2
-
-        return opt_element, prop_params
+    @property
+    def opt_elements(self):
+        """List of optical elements in the beamline"""
+        return self._opt_elements
     
-    @staticmethod
-    def PlaneMirror(ang,tang_len,sag_len):
+    @opt_elements.setter
+    def opt_elements(self,elements):
 
-        opt_element = srw.SRWLOptMirPl()
-        opt_element.set_dim_sim_meth(
-            _size_tang = tang_len, #"Tangential Size [m]"
-            _size_sag = sag_len, #"Sagittal Size [m]"
-            _ap_shape = 'r', # shape of aperture ('r': rectangular)
-            _sim_meth = 2, # simulation method (2: "thick" approximation)
-            _treat_in_out = 1 # 1: input and output wfr at center of mirror
-        )
-        opt_element.set_orient(
-            _nvx = -np.sqrt(1-ang**2), # horizontal coordinate of central normal vector
-            _nvy = 0, # vertical coordinate of central normal vector
-            _nvz = -ang, # longitudinal coordinate of central normal vector
-            _tvx = ang, # horizontal coordinate of central tangential vector
-            _tvy = 0, # vertical coordinate of central tangential vector
-            _x = 0, # horizontal position of mirror center [m]
-            _y = 0 # vertical position of mirror center [m]
-        )
+        self._opt_elements = []
 
-        prop_params = [0,   #"Auto Resize Before Propagation" 
-                       0,   #"Auto Resize After Propagation" 
-                       1.0, #"Relative precision for propagation with autoresizing"
-                       0,   #"Propagator" (check propagators dict)
-                       0,   #"Do any resizing..."? (0: False, 1: True)
-                       1.0, #"H range modification factor at resizing"
-                       1.0, #"H resolution modification factor at resizing"
-                       1.0, #"V range modification factor at resizing"
-                       1.0, #"V resolution modification factor at resizing"
-                       0,   # mysterios parameter 1
-                       0.0, # mysterios parameter 2
-                       0.0] # mysterios parameter 3
-                            # optional parameters 1 to 5 (not included, all are 0)
+        if isinstance(elements, (list,tuple)):
+            for element in elements:
+                self.add_opt_element(element)
+        elif elements:
+            self.add_opt_element(elements)
+            
 
-        return opt_element, prop_params
+    @property
+    def srw_opts(self):
+        """List of SRW optical elements in the beamline"""
+        return [element.srw_opt for element in self.opt_elements]
 
+    @property
+    def props_params(self):
+        """List of propagation parameters of the beamline optical elements"""
+        return [list(element.prop_params) for element in self.opt_elements]
 
-    @staticmethod
-    def ToroidalMirror(ang,tang_len,R_tang,sag_len,R_sag):
-
-        opt_element = srw.SRWLOptMirTor(_rt = R_tang, #"Tangential Radius [m]"
-                                        _rs = R_sag) #"Sagittal Radius [m]"
-        opt_element.set_dim_sim_meth(
-            _size_tang = tang_len, #"Tangential Size [m]"
-            _size_sag = sag_len, #"Sagittal Size [m]"
-            _ap_shape = 'r', # shape of aperture ('r': rectangular)
-            _sim_meth = 2, # simulation method (2: "thick" approximation)
-            _treat_in_out = 1 # 1: input and output wfr at center of mirror
-        )
-        opt_element.set_orient(
-            _nvx = -np.sqrt(1-ang**2), # horizontal coordinate of central normal vector
-            _nvy = 0, # vertical coordinate of central normal vector
-            _nvz = -ang, # longitudinal coordinate of central normal vector
-            _tvx = ang, # horizontal coordinate of central tangential vector
-            _tvy = 0, # vertical coordinate of central tangential vector
-            _x = 0, # horizontal position of mirror center [m]
-            _y = 0 # vertical position of mirror center [m]
-        )
-
-        prop_params = [0,   #"Auto Resize Before Propagation" 
-                       0,   #"Auto Resize After Propagation" 
-                       1.0, #"Relative precision for propagation with autoresizing"
-                       0,   #"Propagator" (check propagators dict)
-                       0,   #"Do any resizing..."? (0: False, 1: True)
-                       1.0, #"H range modification factor at resizing"
-                       1.0, #"H resolution modification factor at resizing"
-                       1.0, #"V range modification factor at resizing"
-                       1.0, #"V resolution modification factor at resizing"
-                       0,   # mysterios parameter 1
-                       0.0, # mysterios parameter 2
-                       0.0] # mysterios parameter 3
-                            # optional parameters 1 to 5 (not included, all are 0)
-
-        return opt_element, prop_params
-
-    @staticmethod
-    def ErrorMirror(filename,unit,ang,orientation,L,W):
-
-        opt_element = SRW_figure_error(filename,unit,ang,ang,orientation,L=L,W=W)
-
-        prop_params = [0,   #"Auto Resize Before Propagation" 
-                       0,   #"Auto Resize After Propagation" 
-                       1.0, #"Relative precision for propagation with autoresizing"
-                       0,   #"Propagator" (check propagators dict)
-                       0,   #"Do any resizing..."? (0: False, 1: True)
-                       1.0, #"H range modification factor at resizing"
-                       1.0, #"H resolution modification factor at resizing"
-                       1.0, #"V range modification factor at resizing"
-                       1.0, #"V resolution modification factor at resizing"
-                       0,   # mysterios parameter 1
-                       0.0, # mysterios parameter 2
-                       0.0] # mysterios parameter 3
-                            # optional parameters 1 to 5 (not included, all are 0)
-
-        return opt_element, prop_params
-
-    def add(self,opt_element,prop_params):
-        self.arOpt.append(opt_element)
-        self.arProp.append(prop_params)
+    def add_opt_element(self,element):
+        if isinstance(element,oe.OpticalElement):
+            self._opt_elements.append(element)
+        else:
+            raise TypeError(f"Optical Element type '{type(element).__name__}' not supported")
 
 
 
 class SynchrotronRadiation(srw.SRWLWfr):
 
-    # tem wavefront inicial (ja calculou electric field) e so' quer propagar de outros jeitos, por exemplo
-    # @typing.overload
-    # def __init__(self, wfr: srw.SRWLWfr):
-    #     ...
-    
-    # calcular a wfr inicial, mas ja tem a trajetoria da particula, entao nao precisa do campo magnetico
-    # @typing.overload
-    # def __init__(self,energy,d,beam):
-    #     ...
-
     # calcular wfr inicial a partir do beam e do campo
     #* nao aceita field=None, quando seria passado so' trajetoria
     def __init__(self, energy, d, x, y,
-                 field:dict,
-                 beam:_beam_type=None,**fieldKwargs):
+                 field,
+                 beam=None,store_steps=False,**fieldKwargs):
         """
         Basic Synchrotron Radiation class. Calculates radiation wavefront from
         source.
@@ -354,33 +98,26 @@ class SynchrotronRadiation(srw.SRWLWfr):
             element=fieldType, field=field[fieldType], **fieldKwargs
         )
         
-        
-        if isinstance(x,(int,float)): x = [x,x,1]
-        elif isinstance(x,np.ndarray): x = [x[0],x[-1],len(x)]
-        if isinstance(y,(int,float)): y = [y,y,1]
-        elif isinstance(y,np.ndarray): y = [y[0],y[-1],len(y)]
-        if isinstance(energy,(int,float)): energy = [energy,energy,1]
-        elif isinstance(energy,np.ndarray): energy = [energy[0],energy[-1],len(energy)]
+        if np.isscalar(x): x = [x]
+        if np.isscalar(y): y = [y]
+        if np.isscalar(energy): energy = [energy]
+
+        self.ExCnt = []
+        self.EyCnt = []
 
         self.setWfr(x,y,energy,d)
 
-
-        srwl.CalcElecFieldSR(self, partTraj, magFldCnt, precisions)
-    
-    # def calc_wfr(wfr,partTraj):
-    #     srwl.CalcElecFieldSR(wfr,partTraj)
+        self.calcWfr(partTraj, magFldCnt, precisions, store_steps)
 
     def __str__(self):
-        #todo
         pass
 
     def __repr__(self):
-        #todo
         pass
 
 
-    def setBeam(self, isTwiss: bool, eqparams: list):
-        self.partBeam = Beam(isTwiss,eqparams)
+    def setBeam(self,eqparams):
+        self.beam = Beam(eqparams)
 
     def load_beam(self, beam="carcara", isTwiss=True):
         mode = 'twiss' if isTwiss else 'rms'
@@ -388,8 +125,7 @@ class SynchrotronRadiation(srw.SRWLWfr):
         with open(beams_file) as b:
             beams = json.load(b)
         eqparams = list(beams[beam][mode].values())
-        self.partBeam = Beam(isTwiss=isTwiss,eqparams=eqparams)
-
+        self.partBeam = Beam(eqparams=eqparams)
 
 
     def setBendingMagnet(self,B,L):
@@ -434,23 +170,14 @@ class SynchrotronRadiation(srw.SRWLWfr):
 
         return und
 
-    #todo: overload de List[MagFld]
-    @typing.overload
-    def setTrajectory(self, element: str, field: srw.SRWLMagFld, relPrec=0.005): ...
-    @typing.overload
-    def setTrajectory(self, element: str, field: list, relPrec=0.005): ...
-    @typing.overload
-    def setTrajectory(self, element: srw.SRWLPrtTrj): ...
     def setTrajectory(self, element, field=None, relPrec=0.005):
-        #!: nao aceita return caso seja dado um SRWLPrtTrj
-        #*: nao aceita lista de fieldType
 
         if isinstance(element,srw.SRWLPrtTrj):
             partTraj = element
             return partTraj
         
-        else:
-            partTraj = 0 # traj arrays not defined, calculate them using _inMagFldC
+        else: # traj arrays not defined, calculate them using _inMagFldC
+            partTraj = 0 
 
             if isinstance(field,srw.SRWLMagFld):
                 arrB = [field]
@@ -458,20 +185,19 @@ class SynchrotronRadiation(srw.SRWLWfr):
                 if element == 'BM':
                     B, L = field
                     arrB = [self.setBendingMagnet(B,L)]
-                #todo: elliptical undulator
                 elif element == 'Und':
                     period_length, nr_periods, B = field
                     arrB = [self.setUndulator(period_length, nr_periods, B)]
             else:
                 raise TypeError("Field type not alowed.")
             
-            # center of magnet: origin
-            Bcenters = [array('d', [0.0]), array('d', [0.0]), array('d', [0.0])]
-            #Container of magnetic field elements and their positions in 3D:
+            # Center of magnet: origin
+            # Bcenters = [array('d', [0.0]), array('d', [0.0]), array('d', [0.0])]
+            # Container of magnetic field elements and their positions in 3D:
             magFldCnt = srw.SRWLMagFldC(_arMagFld=arrB, 
-                                        _arXc=Bcenters[0], 
-                                        _arYc=Bcenters[1], 
-                                        _arZc=Bcenters[2])
+                                        _arXc=np.array([0.0],dtype=np.float64), 
+                                        _arYc=np.array([0.0],dtype=np.float64), 
+                                        _arZc=np.array([0.0],dtype=np.float64))
             
             method = {'Und':1, 'BM':2}.get(element)
             precisions = [method,
@@ -485,12 +211,24 @@ class SynchrotronRadiation(srw.SRWLWfr):
             return partTraj, magFldCnt, precisions
 
 
+    def setWfr(self,x,y,e,d,unit=1):
+        """
+        Initializes the wavefront mesh.
 
-    #todo: overload: cls.setWfr(arrReE,arrImE)
-    def setWfr(self,xrange,yrange,erange,d,unit=1):
-        xi, xf, nx = xrange
-        yi, yf, ny = yrange
-        ei, ef, ne = erange
+        Args:
+            x (array): Horizontal positions [m].
+            y (array): Vertical positions [m].
+            e (array): Photon energies [eV].
+            d (float): Longitudinal position for initial wavefront [m].
+            unit (int, optional): Electric field unit. Defaults to 1.
+                - 0: arbitrary
+                - 1: sqrt(Phot/s/0.1%bw/mm^2)
+                - 2: sqrt(J/eV/mm^2) or sqrt(W/mm^2), depending on frequency or time domain.
+        """
+
+        xi, xf, nx = x[0], x[-1], len(x)
+        yi, yf, ny = y[0], y[-1], len(y)
+        ei, ef, ne = e[0], e[-1], len(e)
 
         #Radiation Sampling for the Initial Wavefront (before optical elements)
 
@@ -505,212 +243,160 @@ class SynchrotronRadiation(srw.SRWLWfr):
         self.mesh.yFin   = yf #final vertical position [m]
         self.mesh.zStart = d #Longitudinal position for initial wavefront [m]
         #Electric field unit:
-        # 0: arbitrary, 1: sqrt(Phot/s/0.1%bw/mm^2)
-        # 2: sqrt(J/eV/mm^2) or sqrt(W/mm^2), depending on represent (freq. or time)
         self.unitElFld = unit 
 
+    def setWfrElecField(self, arrEx, arrEy):
+        self.arEx = copy.copy(arrEx)
+        self.arEy = copy.copy(arrEy)
+
+    def calcWfr(self, partTraj, magFldCnt, precisions, store_steps=True):
+
+        srwl.CalcElecFieldSR(self, partTraj, magFldCnt, precisions)
+
+        if store_steps:
+            self.Ex = [copy.copy(self.arEx)]
+            self.Ey = [copy.copy(self.arEy)]
+
+    def propagateWfr(self, beamline: Beamline, store_steps=False):
+
+        if not beamline.opt_elements:
+            return False
+        
+        optBl = srw.SRWLOptC()
+
+        oe_arr, pp_arr = beamline.srw_opts, beamline.props_params
+
+        if not store_steps:
+            optBl.arOpt, optBl.arProp = oe_arr, pp_arr
+            srwl.PropagElecField(self, optBl)
+
+        else:
+            for srwopt, prop_params in zip(oe_arr, pp_arr):
+
+                optBl.arOpt, optBl.arProp = [srwopt], [prop_params]
+                srwl.PropagElecField(self, optBl)
+                self.Ex.append(self.arEx)
+                self.Ey.append(self.arEy)
+
+        return True
 
 
-    #todo: inserir calc Electric field em algum lugar
-    #?: recalcular depois de alguma redefinicao?
-
-    def propagateWfr(self,optBL): srwl.PropagElecField(self, optBL)
-
-
-    #todo: aceitar lista de coords para calcular multiplas intensidades de uma vez
-    def calc_intensity(self, coords: str, energy: float, X: float, Y: float,
-                       polarization:_pol_type='total',intType:_intens_type='SE'):
+    def IntFromElecField(self, pol, intType, coords, energy, X, Y):
 
         idx_pol = {'linH':0,'linV':1,'lin45':2,'lin135':3,
                    'circR':4,'circL':5,
-                   'total':6}.get(polarization)
-        idx_type = {'SE':0,'ME':1,'SE Fluence':7}.get(intType)
+                   'total':6}.get(pol)
+        idx_type = {'SE I':0,'ME I':1,'SE F':2,'ME F':3,
+                    'SE P':4,'SE ReE':5,'SE ImE':6,
+                    'SE Fluence':7,'SE J':8}.get(intType)
         idx_coord = {'e':0,'x':1,'y':2,'xy':3,'ex':4,'ey':5,'exy':6}.get(coords)
 
         if None not in [idx_pol,idx_type,idx_coord]:
 
             N = np.prod([getattr(self.mesh, f'n{coord}') for coord in coords])
             intervals = [[getattr(self.mesh,f'{coord}Start'),
-                          getattr(self.mesh,f'{coord}Fin'),
-                          getattr(self.mesh,f'n{coord}')] for coord in coords]
+                        getattr(self.mesh,f'{coord}Fin'),
+                        getattr(self.mesh,f'n{coord}')] for coord in coords]
 
-            arrI = array('f', N*[0])
+            isPhase = intType=='SE P'
+            arrI = np.zeros(N, dtype=np.float64 if isPhase else np.float32)
+
             srwl.CalcIntFromElecField(arrI, self,
-                                        idx_pol, idx_type, idx_coord,
-                                        energy, X, Y)
+                                      idx_pol, idx_type, idx_coord,
+                                      energy, X, Y)
 
             return arrI, intervals
 
         else:
             raise ValueError('Invalid arguments! Check their writing.')
 
-    def calc_electric_field(self,part:_part_type,coords,energy,X,Y,polarization:_pol_type='total'):
+    #todo: nao funciona 'SE J'
+    def calc_intensity(self, coords, energy, X, Y,
+                       polarization='total',intType='SE'):
 
-        idx_pol = {'linH':0,'linV':1,'lin45':2,'lin135':3,
-                   'circR':4,'circL':5,
-                   'total':6}.get(polarization)
-        idx_part = {'re':5,'im':6}.get(part)
-        idx_coord = {'e':0,'x':1,'y':2,'xy':3,'ex':4,'ey':5,'exy':6}.get(coords)
-
-        if None not in [idx_pol,idx_part,idx_coord]:
-
-            N = np.prod([getattr(self.mesh, f'n{coord}') for coord in coords])
-            intervals = [[getattr(self.mesh,f'{coord}Start'),
-                          getattr(self.mesh,f'{coord}Fin'),
-                          getattr(self.mesh,f'n{coord}')] for coord in coords]
+        if intType in ['SE','ME']:
+            intType += ' I'
+        else:
+            q, inten = intType.split()
+            if (q=='SE') and (inten not in ['Fluence','J']):
+                raise ValueError('Invalid intensity type!')
             
-            arrI = array('f', N*[0])
-            srwl.CalcIntFromElecField(arrI, self,
-                                        idx_pol, idx_part, idx_coord,
-                                        energy, X, Y)
+        coords_lst = coords.split('-')
 
-            return arrI, intervals
-
+        if len(coords_lst) == 1:
+            return self.IntFromElecField(polarization, intType, coords, energy, X, Y)
         else:
-            print('Invalid arguments! Check their writing.')
+            return [self.IntFromElecField(polarization, intType, coord, energy, X, Y)
+                        for coord in coords_lst]
 
-    #!: ainda com problemas de acertar o novo range pedido
-    def resize_wfr_srw(self,xrangenew,yrangenew,erangenew=[],method='regular',rsType='pos/ang'):
-        """
-        Resize wavefront with respect to horizontal and vertical ranges or energy range.
-
-        Args:
-            xnew (list): new x range values; [xStart, xFin, nx]
-            ynew (list): new y range values; [yStart, yFin, ny]
-        """
-
-        idx_meth = {'regular':0, 'special':1}.get(method) # without or with FFT
-        idx_type = {'pos/ang':'c', 'e/t':'f'}.get(rsType)
-
-        if idx_type=='c':
-
-            xi_old, xf_old, nx_old = self.mesh.xStart, self.mesh.xFin, self.mesh.nx
-            yi_old, yf_old, ny_old = self.mesh.yStart, self.mesh.yFin, self.mesh.ny
-            xi_new, xf_new, nx_new = xrangenew
-            yi_new, yf_new, ny_new = yrangenew
-
-            xamp_old = xf_old - xi_old
-            xamp_new = xf_new - xi_new
-            f_ra_x = xamp_new/xamp_old
-            # xstep_old = xamp_old/(nx_old-1)
-            # xstep_new = xamp_new/(nx_new-1)
-            # f_re_x = xstep_old/xstep_new # srw way
-            # f_re_x = nx_new/nx_old       # my way
-            f_re_x = 1.0                   # oasys way
-            xc_new = (xi_new + xf_new)/2
-            f_xc = (xc_new - xi_old)/xamp_old
-            #todo: ajustar xc para sempre deslocar para depois de xi_new, o mais
-            #todo: proximo e sempre antes de xf_new, o mais proximo
-
-            yamp_old = yf_old - yi_old
-            yamp_new = yf_new - yi_new
-            f_ra_y = yamp_new/yamp_old
-            # ystep_old = yamp_old/(ny_old-1)
-            # ystep_new = yamp_new/(ny_new-1)
-            # f_re_y = ystep_old/ystep_new # srw way
-            # f_re_y = ny_new/ny_old       # my way
-            f_re_y = 1.0                   # oasys way
-            yc_new = (yi_new + yf_new)/2
-            f_yc = (yc_new - yi_old)/yamp_old
-
-            params = [idx_meth,f_ra_x,f_re_x,f_ra_y,f_re_y,f_xc,f_yc]
-            # print(params)
-
-        elif idx_type=='f':
-
-            ei_old, ef_old, ne_old = self.mesh.eStart, self.mesh.eFin, self.mesh.ne
-            ei_new, ef_new, ne_new = erangenew
-
-            eamp_old = ef_old - ei_old
-            eamp_new = ef_new - ei_new
-            f_ra = eamp_new/eamp_old
-            # estep_old = eamp_old/(ne_old-1)
-            # estep_new = eamp_new/(ne_new-1)
-            # f_re = estep_old/estep_new # srw way
-            # f_re = ne_new/ne_old       # my way
-            f_re = 1.0                   # oasys way
-            ec_new = (ei_new + ef_new)/2
-            f_c = (ec_new - ei_old)/eamp_old
-
-            params = [idx_meth,f_ra,f_re,f_c]
-            # print(params)
-
+    #todo: nao funciona xy
+    def calc_flux(self, coords, energy, X, Y,
+                  polarization='total',intType='SE'):
+        
+        if intType in ['SE','ME']:
+            intType += ' F'
         else:
+            raise ValueError('Invalid flux type!')
+
+        coords_lst = coords.split('-')
+        
+        if len(coords_lst) == 1:
+            return self.IntFromElecField(polarization, intType, coords, energy, X, Y)
+        else:
+            return [self.IntFromElecField(polarization, intType, coord, energy, X, Y)
+                        for coord in coords_lst]
+
+    def calc_electric_field(self, part, coords, energy, X, Y, polarization='total'):
+        
+        if part=='all':
+
+            intType_lst = ['SE ReE','SE ImE','SE P']
+            coords_lst = coords.split('-')
+
+            if len(coords_lst) == 1:
+                return [self.IntFromElecField(polarization, intType, coords, energy, X, Y)
+                            for intType in intType_lst]
+            else:
+                return [[self.IntFromElecField(polarization, intType, coord, energy, X, Y)
+                            for coord in coords_lst]
+                            for intType in intType_lst]
+
+        intType = {'phase':'SE P','re':'SE ReE','im':'SE ImE'}[part]
+        coords_lst = coords.split('-')
+
+        if len(coords_lst) == 1:
+            return self.IntFromElecField(polarization, intType, coords, energy, X, Y)
+        else:
+            return [self.IntFromElecField(polarization, intType, coord, energy, X, Y)
+                        for coord in coords_lst]
+
+    @staticmethod
+    def unwrap_phase(wrapped_phase: np.ndarray) -> np.ndarray:
+
+        if wrapped_phase is None:
             return False
+        
+        if wrapped_phase.ndim == 1:
+            unwrapped_phase =  np.unwrap(wrapped_phase)
+        elif wrapped_phase.ndim == 2:
+            unwrapped_phase =  np.unwrap(np.unwrap(wrapped_phase, axis=0), axis=1)
 
-        srwl.ResizeElecField(self,idx_type,params)
-
-        return True
-
-    def resize_wfr(self,newxlim,newylim):
-        nx_old, ny_old = self.mesh.nx, self.mesh.ny
-        x_start, x_fin = newxlim
-        y_start, y_fin = newylim
-        nx_new = int((x_fin - x_start)/(self.mesh.xFin - self.mesh.xStart)*(nx_old-1) + 1)
-        ny_new = int((y_fin - y_start)/(self.mesh.yFin - self.mesh.yStart)*(ny_old-1) + 1)
-        idx_x = slice(int((x_start - self.mesh.xStart)/(self.mesh.xFin - self.mesh.xStart)*(nx_old-1)),int((x_fin - self.mesh.xStart)/(self.mesh.xFin - self.mesh.xStart)*(nx_old-1) + 1))
-        idx_y = slice(int((y_start - self.mesh.yStart)/(self.mesh.yFin - self.mesh.yStart)*(ny_old-1)),int((y_fin - self.mesh.yStart)/(self.mesh.yFin - self.mesh.yStart)*(ny_old-1) + 1))
-        self.arEx = self.arEx[idx_x,idx_y]
-        self.arEy = self.arEy[idx_x,idx_y]
-        self.mesh.nx = nx_new
-        self.mesh.ny = ny_new
-        self.mesh.xStart = x_start
-        self.mesh.xFin = x_fin
-        self.mesh.yStart = y_start
-        self.mesh.yFin = y_fin
+        return unwrapped_phase
     
-    def slice_wfr(self,xlim,ylim):
+    @staticmethod
+    def wrap_phase(unwrapped_phase: np.ndarray) -> np.ndarray:
 
-        print('initial self.Ex[:10] array:',self.arEx[:10])
-        print('initial self.xi:',self.mesh.xStart,'initial self.xf:',self.mesh.xFin)
-        print('initial self.nx:',self.mesh.nx)
-        print('initial self.yi:',self.mesh.yStart,'initial self.yf:',self.mesh.yFin)
-        print('initial self.ny:',self.mesh.ny)
+        if unwrapped_phase is None:
+            return False
+        
+        wrapped_phase = ((unwrapped_phase-np.pi) % (2*np.pi)) - np.pi
 
-        xi,xf,nx = self.mesh.xStart, self.mesh.xFin, self.mesh.nx
-        yi,yf,ny = self.mesh.yStart, self.mesh.yFin, self.mesh.ny
-        ne = self.mesh.ne
-
-        arEx = np.array(self.arEx).reshape(ny,nx,ne,2)
-
-        x0, x1 = xlim
-        y0, y1 = ylim
-
-        x = np.linspace(xi,xf,nx)
-        y = np.linspace(yi,yf,ny)
-        maskx = (x0 <= x) & (x <= x1)
-        masky = (y0 <= y) & (y <= y1)
-
-        newxi, newxf, newnx = x[maskx][0], x[maskx][-1], sum(maskx)
-        newyi, newyf, newny = y[masky][0], y[masky][-1], sum(masky)
-
-        self.allocate(ne,newnx,newny)
-
-        sliced_arEx = arEx[masky,maskx,:,:].reshape(-1)
-
-        self.arEx = array('f',sliced_arEx)
+        return wrapped_phase
         
 
-        self.mesh.xStart, self.mesh.xFin, self.mesh.nx = newxi, newxf, newnx
-        self.mesh.yStart, self.mesh.yFin, self.mesh.ny = newyi, newyf, newny
-
-        
-
-
-        print('final self.Ex[:10] array:',self.arEx[:10])
-        print('final self.xi:',self.mesh.xStart,'final self.xf:',self.mesh.xFin)
-        print('final self.nx:',self.mesh.nx)
-        print('final self.yi:',self.mesh.yStart,'final self.yf:',self.mesh.yFin)
-        print('final self.ny:',self.mesh.ny)
-
-        
-    # def resize_wfr(self,)
-    
-    
-    #todo: override calc_stokes de SRWLWfr
-
+    '''
     @classmethod
-    def energy_loop_intensity(cls,energy,coords:str,x,y,xnew=None,*clsargs,**clskwargs):
+    def energy_loop_intensity(cls,energy,coords:str,x,y,*clsargs,**clskwargs):
         propa_sc = clskwargs.get('propa_sc')
         coords = coords.split('-')
 
@@ -741,6 +427,23 @@ class SynchrotronRadiation(srw.SRWLWfr):
         # arrsIx, arrsIy = arrsI[:,0,:], arrsI[:,1,:]
         
         return [arrsI[:,i,:] for i in range(len(coords))], ranges
+
+
+
+    @classmethod
+    def energy_loop_intensity(cls, energy, coords, energy, X, Y,
+                              polarization='total',intType='SE'):
+        
+        arrsI = []
+        ranges = []
+
+        for Eph in energy:
+
+            SR = 
+
+            arrI, intervals = 
+
+    '''
 
 
 

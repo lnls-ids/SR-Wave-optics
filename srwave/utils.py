@@ -2,104 +2,167 @@
 import typing
 
 import numpy as np
+import scipy.constants as cte
 from scipy.interpolate import interp1d
+from scipy.optimize import curve_fit
 
 
-#todo: aprimorar fazendo interpolacao entre os dois pontos que cruzam a metade
-# full width at half maximum; largura a meia altura
-def FWHM(x,y):
-    """
-    Calculates the Full Width at Half Maximum (FWHM) of a Gaussian-type function.
+
+
+def find_zeros(pos, data):
+    """Find zero positions on data.
+
+    Consecutive data pairs with changing sign data are first determined:
+        Pair:       (pos[i], data[i]) and (pos[i+1], data[i+1])
+        In which:   data[i] x data[i+1] = -1
+    Each data pair results in a zero position between pos[i] and pos[i+1]:
+        (data[i+1]*pos[i] - data[i]*pos[i+1]) / (data[i+1] - data[i])
+    Which is the position in which the linear interpolation between the
+    points crosses the data==0 axis.
 
     Args:
-        x: Array of x-values.
-        y: Array of corresponding y-values (function values).
+        pos (numpy.ndarray): Positions list.
+        data (numpy.ndarray): Data list.
 
     Returns:
-        The FWHM value.
+        numpy.ndarray: List of the zeros' positions.
+
+    Notes:
+        Function adapted from the [imaids package](https://github.com/lnls-ima/insertion-devices)
     """
-    half_max = np.max(y) / 2
-    # Find the indices of the points closest to half maximum on either side of the peak
-    left_idx = np.argmin(np.abs(y[:np.argmax(y)] - half_max))
-    right_idx = np.argmin(np.abs(y[np.argmax(y):] - half_max)) + np.argmax(y)
 
-    # Calculate the FWHM
-    return x[right_idx] - x[left_idx], left_idx, right_idx
+    sign = np.sign(data)
 
+    idxleft, = np.nonzero(sign[:-1] + sign[1:] == 0) # left, before zeros
+    idxright = idxleft + 1                           # right, after zeros
 
-#todo: test later
-def calculate_fwhm(x, y):
-  """
-  Calculates the Full Width at Half Maximum (FWHM) of a peak.
+    xl = pos[idxleft]   # x left
+    xr = pos[idxright]  # x right
+    yl = data[idxleft]  # y left
+    yr = data[idxright] # y right
 
-  Args:
-    x: Array of x-values.
-    y: Array of y-values.
+    # linear interpolation to find the x-values at height
+    zeros = (yr*xl-yl*xr)/(yr-yl)
 
-  Returns:
-    The FWHM value.
-  """
-
-  half_max = np.max(y) / 2
-  
-  # find when function crosses line half_max (when sign of diff flips)
-  # take the 'derivative' of signum(half_max - y[])
-  d = np.sign(half_max - np.array(y[0:-1])) - np.sign(half_max - np.array(y[1:]))
-  
-  # find the left and right most indexes
-  l = np.where(d > 0)[0][0]
-  r = np.where(d < 0)[0][-1]
-
-  # Use linear interpolation to find the x-value at half_max
-  left_x = x[l] + (x[l+1] - x[l]) * ((half_max - y[l]) / (y[l+1] - y[l]))
-  right_x = x[r] + (x[r+1] - x[r]) * ((half_max - y[r]) / (y[r+1] - y[r]))
-
-  return right_x - left_x
+    return zeros
 
 
-def SR_fwhm(SR,
+def critical_energy(E,B):
+    """E: accel energy [eV]; B: bending field [T]"""
+    E0 = cte.electron_mass*cte.c**2/cte.e # eV
+    gamma = E/E0
+    rho = (gamma*cte.electron_mass)*cte.c/(cte.e*B)
+    wc = (3/2)*(cte.c/rho)*(gamma**3)
+    return cte.hbar*wc/cte.e
+
+
+
+# -------------------------------- wavefront -------------------------------- #
+
+def resize_1d(x0,y0,x):
+    f = interp1d(x0,y0)
+    return f(x)
+
+def wfr_count_points(xlim,ylim,elim):
+    pass
+
+def convolution():
+    pass
+
+
+
+# ---------------------------------- width ---------------------------------- #
+
+def fw_calc(x,y,hfactor):
+    """
+    Calculates the Full Width at some fraction of the data maximum.
+    
+    Args:
+        x (numpy.ndarray): x values
+        y (numpy.ndarray): y values
+        hfactor (float): fraction of the maximum
+    
+    Returns:
+        float: full width
+        numpy.ndarray: x values where the half maximum crosses the data
+    """
+    zeros = find_zeros(x,y-hfactor*np.max(y))
+    return zeros[-1]-zeros[0], zeros
+
+def fwhm_calc(x,y):
+    """
+    Calculates the Full Width at Half Maximum (fwhm) of some data.
+    
+    Args:
+        x (numpy.ndarray): x values
+        y (numpy.ndarray): y values
+    
+    Returns:
+        float: fwhm
+        numpy.ndarray: x values where the half maximum crosses the data
+    """
+    return fw_calc(x,y,0.5)
+
+def fwhm_SR(SR,
             coord:typing.Literal['x','y'],energy:float,X:float,Y:float,
             polarization='total',intType='SE'):
     """FWHM of PSF [um]"""
-    arrIxi, [rangexi] = SR.calc_intensity(coord,energy,X,Y,polarization,intType)
-    xi = np.linspace(*rangexi)*1e6
+    arrIxn, [rangexn] = SR.calc_intensity(coord,energy,X,Y,polarization,intType)
+    xn = np.linspace(*rangexn)*1e6
 
-    fwhm = calculate_fwhm(xi,arrIxi)
+    fwhm, _ = fwhm_calc(xn,arrIxn)
 
     return fwhm
 
 
 
-def FWHM_to_RMS_g(fwhm):
-    """conversor for a gaussian distribution"""
+# --------------------------- gaussian functions --------------------------- #
+
+def gaussian(x, a, x0, sigma):
+    return a * np.exp(-(x - x0) ** 2 / (2 * sigma ** 2))
+
+def gaussian_fit(x, data):
+    """
+    Fits a gaussian curve to data points using least squares.
+
+    Parameters
+    ----------
+    x : array_like
+        x values
+    data : array_like
+        y values
+
+    Returns
+    -------
+    params : array_like
+        parameters of the gaussian curve in the form (a, x0, sigma)
+    """
+    
+    initial_guess = [np.max(data), x[np.argmax(data)], 1]
+    params, _ = curve_fit(gaussian, x, data, p0=initial_guess)
+    
+    return params
+
+def gaussian_fwhm_to_rms(fwhm):
+    """Conversor for a gaussian distribution"""
     c = 2*np.sqrt(2*np.log(2))
     sigma = fwhm/c
     return sigma
 
-def RMS_to_FWHM_g(rms):
-    """conversor for a gaussian distribution"""
+def gaussian_rms_to_fwhm(rms):
+    """Conversor for a gaussian distribution"""
     c = 2*np.sqrt(2*np.log(2))
     fwhm = c*rms
     return fwhm
 
 
-#todo: talvez aplicar o resize do srwlib, conferir como ele funciona
-def resize_1d(x0,y0,x):
-    f = interp1d(x0,y0)
-    return f(x)
 
+# -------------------------- numerical integration -------------------------- #
 
-
-
-
-
-
-#todo: testar se os f0, f1, f2, f3, f4 precisam ser necessariamente igualmente espaçados (acredito que não)
 # simpson rule
 def S(h,f,x0):
     return (h/3)*(f(x0)+4*f(x0+h)+2*f(x0+2*h)+4*f(x0+3*h)+f(x0+4*h))
 
-#todo: upgrade to accept xi, xf nd arrays
 # integrate arbitrary interval
 def isimpson(f,xi,xf,N):
     # works with:
@@ -109,4 +172,5 @@ def isimpson(f,xi,xf,N):
     h = (xf-xi)/(4*N)
     integral = [S(h,f,xi+n*4*h) for n in range(N)]
     return sum(integral)
+
 

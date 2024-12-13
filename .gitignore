@@ -1,0 +1,4 @@
+__pycache__
+srwave.egg-info
+srwave/__pycache__
+srwave/study/*

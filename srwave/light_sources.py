@@ -1,12 +1,10 @@
 
-
 import numpy as np
 
 from scipy.special import kv, jv, sinc
 import scipy.constants as cte
 
 
-#todo: passar para dentro das funcoes, isso nao e' uma boa pratica
 # fundamental constants
 _hbar = cte.hbar # reduced planck constant [J.s]
 _c = cte.c # speed of light [m/s]
@@ -26,16 +24,12 @@ _beta = 1-(1/(2*(_gamma**2))) # velocity parameter [adim]
 
 # ------------------------ bending magnet radiation ------------------------ #
 
-
-#todo: unificar as duas funcoes passando argumento de escolher adimensional or dimensional em angulo ou area
-
 def bm_d2IdWdw(w_wc,gtheta):
     G = 0.5*w_wc*((1+gtheta**2)**(3/2))
     Q = (3*(_e**2)*(_gamma**2))/(16*(np.pi**3)*_eps0*_c)
     return Q * (w_wc**2)*((1+gtheta**2)**2) * (kv(2/3,G)**2 + (gtheta**2/(1+gtheta**2))*kv(1/3,G)**2)
 
 # exact vertical bending magnet spectrum
-#todo: polarizacao pi e sigma
 def bm(B,energy,gtheta,dep='ang',d=None):
     """
     Calculates bending magnet spectrum.
@@ -71,7 +65,8 @@ def bm(B,energy,gtheta,dep='ang',d=None):
             raise ValueError("Dependence (dep) not identified!")
         
     return spec
-    
+
+
 
 # ----------------------- planar undulator radiation ----------------------- #
 
@@ -103,8 +98,8 @@ def und_aux(wbar,gtx,gty,m,n,K,lambda_u):
 
     return temp
 
-# undulator spectrum (still to improve, k=2,6)
-#todo: even harmonics k=4,6,10,... not symmetric, but should be
+# undulator spectrum (still to improve)
+#!: even harmonics k=4,6,10,... not symmetric, but should be
 def und(energy,gtx,gty,K,lambda_u,N,I_b):
 
     # undulator parameters
@@ -163,7 +158,7 @@ def und_k(k,gtx,gty,K,lambda_u,N,I_b):
     w1 = 4*np.pi*_c*(_gamma**2)/(lambda_u*(1+((K**2)/2))) # first harmonic frequency [rad/s]
 
     # calc parameters
-    #todo: redefinir q_u e q_v para cortar lambda_u, se nao me engano
+    #todo: redefinir q_u e q_v para cortar lambda_u
     q_u = (K*w1)/((_gamma**2)*w0)
     q_v = ((K**2)*w1)/(8*(_gamma**2)*w0)
     Q = (((_e*w1)/(4*_gamma*w0))**2)/(np.pi*_eps0*_c)
