@@ -1,13 +1,12 @@
 
 import json
-import typing
 import copy
+from typing import Optional, Literal, Union, overload
 
 import numpy as np
 
-
-from . import utils as uti
 from . import opt_elements as oe
+from . import mag_elements as me
 from .beamtemp import Beam
 
 import srwpy.srwlib as srw
@@ -16,7 +15,35 @@ import srwpy.srwlpy as srwl
 
 
 
+# SynchrotronRadiation
+_Num_Arr = Union[float,list[float],np.ndarray]
+_Arr = Union[list[float],np.ndarray]
+_Trajectory = Optional[srw.SRWLPrtTrj]
+_MagCnt = Optional[me.MagnetCnt]
+_Beam = Optional[Beam]
+_Polarization = Literal['linH', 'sigma', 'linV', 'pi',
+                        'lin45', 'lin135',
+                        'circR', 'circL',
+                        'total']
+_Intensity = Literal['SE I', 'ME I', 'SE Fluence', 'SE J',
+                     'SE F', 'ME F',
+                     'SE P', 'SE ReE', 'SE ImE']
+_IntensityI = Literal['SE', 'ME', 'SE Fluence', 'SE J']
+_IntensityF = Literal['SE', 'ME']
+_Part = Literal['phase', 're', 'im', 'all']
+_Coordinate = Literal['e', 'x', 'y', 'xy', 'ex', 'ey', 'exy']
+_Lim = Union[list[float],tuple[float],None]
+
+
+
+
+# possivelmente criar beamline sem nada vai dar erro ao acessar atributo
 class Beamline:
+
+    @overload
+    def __init__(self,line:Optional[oe.OpticalElement]=...): ...
+    @overload
+    def __init__(self,line:Optional[list[oe.OpticalElement]]=...): ...
 
     def __init__(self,line=None):
 
@@ -26,7 +53,7 @@ class Beamline:
 
 
     @property
-    def opt_elements(self):
+    def opt_elements(self) -> list[oe.OpticalElement]:
         """List of optical elements in the beamline"""
         return self._opt_elements
     
@@ -43,61 +70,73 @@ class Beamline:
             
 
     @property
-    def srw_opts(self):
+    def srw_opts(self) -> list[srw.SRWLOpt]:
         """List of SRW optical elements in the beamline"""
         return [element.srw_opt for element in self.opt_elements]
 
     @property
-    def props_params(self):
+    def props_params(self) -> list[list]:
         """List of propagation parameters of the beamline optical elements"""
         return [list(element.prop_params) for element in self.opt_elements]
 
-    def add_opt_element(self,element):
-        if isinstance(element,oe.OpticalElement):
-            self._opt_elements.append(element)
-        else:
-            raise TypeError(f"Optical Element type '{type(element).__name__}' not supported")
+    def add_opt_element(self,element:oe.OpticalElement):
+
+        if not isinstance(element,oe.OpticalElement):
+            raise TypeError("Optical Element type" + \
+                            f" '{type(element).__name__}' " + \
+                            "not supported")
+        
+        self._opt_elements.append(element)
 
 
 
-class SynchrotronRadiation(srw.SRWLWfr):
 
-    # calcular wfr inicial a partir do beam e do campo
-    #* nao aceita field=None, quando seria passado so' trajetoria
-    def __init__(self, energy, d, x, y,
-                 field,
-                 beam=None,store_steps=False,**fieldKwargs):
+
+class SynchrotronRadiation:
+
+    def __init__(self,
+            energy:_Num_Arr,
+            d:float,
+            x:_Num_Arr,
+            y:_Num_Arr,
+            traj:_Trajectory=None,
+            fields:_MagCnt=None,
+            beam:_Beam=None,
+            store_steps=False
+        ):
         """
         Basic Synchrotron Radiation class. Calculates radiation wavefront from
-        source.
+        source and propagates through optical elements.
 
-        Args:
-            energy (float or list): photon energy(ies) [eV]; format: [ei,ef,ni]
-            d (float): distance from source [m]
-            x (float or list): horizontal position(s) [m]; format: [xi,xf,nx]
-            y (float or list): vertical position(s) [m]; format: [yi,yf,ny]
-            field (dict):
-                - format: {fieldType: field}
-                - Bending source: fieldType = 'BM', field = [B,L]
-                - Undulator source: fieldType = 'Und', field = [period_length, nr_periods, B] 
-            beam:
-                - from RMS: beam = [sigX,sigXp,XXP,sigY,sigYp,YYP]
-                - from twiss: beam = [emitX,betaX,alphaX,etaX,etaXp,
-                                      emitY,betaY,alphaY,etaY,etaYp]
+        Parameters
+        ----------
+        energy : float or array
+            Photon energy [eV].
+        d : float
+            Distance from source [m].
+        x, y : float or array
+            Horizontal and vertical position [m].
+        traj : srw.SRWLPrtTrj or int
+            Trajectory of the particle.
+        field : srw.SRWLMagFldC or int
+            Magnetic fields exerced over the particle.
+        source : {'undulator', 'bending'}, optional
+            Magnetic field type.
+        beam : Beam, optional
+            Particle beam.
+        store_steps : bool, optional
+            Store light source wavefront or not.
         """
+        self.wfr = srw.SRWLWfr()
+        self.wfr.partBeam = Beam() if beam is None else beam
 
-        super().__init__()
+        self.trajectory = traj
 
+        self.fields = fields
 
-        self.partBeam = Beam() if beam is None else beam
-        
+        self.precisions = {'method':fields.fieldtype,'prec':0.005,'zstart':0.0,
+                           'zend':0.0,'np':50000,'usetermin':True,'sampling':0}
 
-        fieldType = list(field.keys())[0]
-
-        partTraj, magFldCnt, precisions = self.setTrajectory(
-            element=fieldType, field=field[fieldType], **fieldKwargs
-        )
-        
         if np.isscalar(x): x = [x]
         if np.isscalar(y): y = [y]
         if np.isscalar(energy): energy = [energy]
@@ -105,9 +144,10 @@ class SynchrotronRadiation(srw.SRWLWfr):
         self.ExCnt = []
         self.EyCnt = []
 
-        self.setWfr(x,y,energy,d)
+        self.set_mesh(x,y,energy,d)
+    
 
-        self.calcWfr(partTraj, magFldCnt, precisions, store_steps)
+
 
     def __str__(self):
         pass
@@ -117,7 +157,7 @@ class SynchrotronRadiation(srw.SRWLWfr):
 
 
     def setBeam(self,eqparams):
-        self.beam = Beam(eqparams)
+        self.wfr.partBeam = Beam(eqparams)
 
     def load_beam(self, beam="carcara", isTwiss=True):
         mode = 'twiss' if isTwiss else 'rms'
@@ -125,229 +165,309 @@ class SynchrotronRadiation(srw.SRWLWfr):
         with open(beams_file) as b:
             beams = json.load(b)
         eqparams = list(beams[beam][mode].values())
-        self.partBeam = Beam(eqparams=eqparams)
+        self.wfr.partBeam = Beam(eqparams=eqparams)
 
 
-    def setBendingMagnet(self,B,L):
-        """B [T], L [m]"""
-        
-        nr_poles = 1
-        BM = srw.SRWLMagFldM(B, nr_poles, 'n', L)
 
-        return BM
-    
-    @staticmethod
-    def setHarmonicField(B,plane='v',phase0=0,symmetry=1,transverse_coeff=1):
-        """harmonic magnetic field.
-        Args:
-            plane: magnetic field plane: horzontal ('h') or vertical ('v').
-            symmetry: longitudinal symmetry: symmetric ('') or anti-symmetric ('anti').
+    def set_mesh(self,x:_Arr,y:_Arr,e:_Arr,d:float):
         """
-        n_harm = 1 #harmonic number ; todos os exemplos usam isso #?: o que e'?
-        idx_symm = {'':1,'anti':-1}.get(symmetry)
-        return srw.SRWLMagFldH(n_harm,plane,B,phase0,idx_symm,transverse_coeff)
-
-    def setUndulator(self,period_length,nr_periods,B,Bsettings=['v',0,'',1]):
-        """
-        Args:
-            period_length [m].
-            nr_periods: number of periods.
-            B (float or list of floats): magnetic field amplitude [T].
-            Bsettings: list of params to configurate harmonic magnetic fields:
-                [0]: plane ('h' or 'v')
-                [1]: initial phase
-                [2]: symmetry ('' or 'anti')
-                [3]: coefficient of field transverse dependence
-        """
-
-        if isinstance(B,(int,float)): B, Bsettings = [B], [Bsettings]
-        arrH = []
-        for b, settings in zip(B,Bsettings):
-            harm = self.setHarmonicField(b,*settings)
-            arrH.append(harm)
-        
-        und = srw.SRWLMagFldU(arrH,period_length,nr_periods)
-
-        return und
-
-    def setTrajectory(self, element, field=None, relPrec=0.005):
-
-        if isinstance(element,srw.SRWLPrtTrj):
-            partTraj = element
-            return partTraj
-        
-        else: # traj arrays not defined, calculate them using _inMagFldC
-            partTraj = 0 
-
-            if isinstance(field,srw.SRWLMagFld):
-                arrB = [field]
-            elif isinstance(field,list):
-                if element == 'BM':
-                    B, L = field
-                    arrB = [self.setBendingMagnet(B,L)]
-                elif element == 'Und':
-                    period_length, nr_periods, B = field
-                    arrB = [self.setUndulator(period_length, nr_periods, B)]
-            else:
-                raise TypeError("Field type not alowed.")
-            
-            # Center of magnet: origin
-            # Bcenters = [array('d', [0.0]), array('d', [0.0]), array('d', [0.0])]
-            # Container of magnetic field elements and their positions in 3D:
-            magFldCnt = srw.SRWLMagFldC(_arMagFld=arrB, 
-                                        _arXc=np.array([0.0],dtype=np.float64), 
-                                        _arYc=np.array([0.0],dtype=np.float64), 
-                                        _arZc=np.array([0.0],dtype=np.float64))
-            
-            method = {'Und':1, 'BM':2}.get(element)
-            precisions = [method,
-                          relPrec, #method=2 => relative precision
-                          0,     #longitudinal position [m] to start integration
-                          0,     #longitudinal position [m] to finish integration
-                          50000, #number of points to use for trajectory calculation 
-                          1,     #do calculate terminating terms
-                          0.0]   #sampling factor
-
-            return partTraj, magFldCnt, precisions
-
-
-    def setWfr(self,x,y,e,d,unit=1):
-        """
-        Initializes the wavefront mesh.
+        Initializes the wavefront mesh, i.e., the radiation sampling of the
+        initial wavefront (before optical elements)
 
         Args:
             x (array): Horizontal positions [m].
             y (array): Vertical positions [m].
             e (array): Photon energies [eV].
             d (float): Longitudinal position for initial wavefront [m].
-            unit (int, optional): Electric field unit. Defaults to 1.
-                - 0: arbitrary
-                - 1: sqrt(Phot/s/0.1%bw/mm^2)
-                - 2: sqrt(J/eV/mm^2) or sqrt(W/mm^2), depending on frequency or time domain.
         """
 
         xi, xf, nx = x[0], x[-1], len(x)
         yi, yf, ny = y[0], y[-1], len(y)
         ei, ef, ne = e[0], e[-1], len(e)
 
-        #Radiation Sampling for the Initial Wavefront (before optical elements)
+        # number of points of photon energy, horizontal and vertical positions
+        self.wfr.allocate(ne,nx,ny)
 
-        #Numbers of points of photon energy, horizontal and vertical positions
-        self.allocate(ne,nx,ny) 
-        #Mesh
-        self.mesh.eStart = ei #initial energy
-        self.mesh.eFin   = ef #final energy
-        self.mesh.xStart = xi #initial horizontal position [m]
-        self.mesh.xFin   = xf #final horizontal position [m]
-        self.mesh.yStart = yi #initial vertical position [m]
-        self.mesh.yFin   = yf #final vertical position [m]
-        self.mesh.zStart = d #Longitudinal position for initial wavefront [m]
-        #Electric field unit:
-        self.unitElFld = unit 
+        # mesh
+        self.wfr.mesh.eStart = ei #initial energy
+        self.wfr.mesh.eFin   = ef #final energy
+        self.wfr.mesh.xStart = xi #initial horizontal position [m]
+        self.wfr.mesh.xFin   = xf #final horizontal position [m]
+        self.wfr.mesh.yStart = yi #initial vertical position [m]
+        self.wfr.mesh.yFin   = yf #final vertical position [m]
+        self.wfr.mesh.zStart = d  #longitudinal position for initial wfr [m]
+        
 
-    def setWfrElecField(self, arrEx, arrEy):
+    def set_wfr_elec_field(self, arrEx, arrEy):
         self.arEx = copy.copy(arrEx)
         self.arEy = copy.copy(arrEy)
 
-    def calcWfr(self, partTraj, magFldCnt, precisions, store_steps=True):
 
-        srwl.CalcElecFieldSR(self, partTraj, magFldCnt, precisions)
+
+    def CalcElecFieldSR(self, store_steps=False):
+        precisions = list(self.precisions.values())
+
+        srwl.CalcElecFieldSR(self.wfr,self.trajectory,self.fields.cnt,
+                             precisions)
 
         if store_steps:
-            self.Ex = [copy.copy(self.arEx)]
-            self.Ey = [copy.copy(self.arEy)]
+            self.ExCnt = [copy.copy(self.arEx)]
+            self.EyCnt = [copy.copy(self.arEy)]
 
-    def propagateWfr(self, beamline: Beamline, store_steps=False):
+    def calc_wfr(self, store_steps=False):
+        self.CalcElecFieldSR(store_steps)
+
+    # def calcWfr(self, partTraj, magFldCnt, precisions, store_steps=True):
+
+    #     srwl.CalcElecFieldSR(self, partTraj, magFldCnt, precisions)
+
+    #     if store_steps:
+    #         self.ExCnt = [copy.copy(self.arEx)]
+    #         self.EyCnt = [copy.copy(self.arEy)]
+
+    def PropagElecField(self, oe_arr, pp_arr):
+        optBl = srw.SRWLOptC(oe_arr,pp_arr)
+        srwl.PropagElecField(self.wfr, optBl)
+
+    def propagate_wfr(self, beamline:Beamline, store_steps=False):
 
         if not beamline.opt_elements:
             return False
-        
-        optBl = srw.SRWLOptC()
 
         oe_arr, pp_arr = beamline.srw_opts, beamline.props_params
 
         if not store_steps:
-            optBl.arOpt, optBl.arProp = oe_arr, pp_arr
-            srwl.PropagElecField(self, optBl)
+            self.PropagElecField(oe_arr, pp_arr)
 
         else:
             for srwopt, prop_params in zip(oe_arr, pp_arr):
+                
+                self.PropagElecField([srwopt],[prop_params])
 
-                optBl.arOpt, optBl.arProp = [srwopt], [prop_params]
-                srwl.PropagElecField(self, optBl)
-                self.Ex.append(self.arEx)
-                self.Ey.append(self.arEy)
+                self.ExCnt.append(self.arEx)
+                self.EyCnt.append(self.arEy)
 
         return True
 
 
-    def IntFromElecField(self, pol, intType, coords, energy, X, Y):
+    def IntFromElecField(self,
+            pol:_Polarization,
+            intType:_Intensity,
+            coords:_Coordinate,
+            energy:float,
+            X:float,
+            Y:float
+        ):
+        """
+        Wrapper of SRW's srwlpy.CalcIntFromElecField() function.
 
-        idx_pol = {'linH':0,'linV':1,'lin45':2,'lin135':3,
+        Parameters
+        ----------
+        pol : {'linH', 'linV', 'lin45', 'lin135', 'circR', 'circL', 'total'}
+            Polarization of the radiation.
+        intType : {'SE I', 'ME I', 'SE F', 'ME F', 'SE P', 'SE ReE', 'SE ImE', 
+            'SE Fluence', 'SE J'}\n
+            Intensity type.
+        coords : {'e', 'x', 'y', 'xy', 'ex', 'ey', 'exy'}
+            Coordinates for calculation.
+        energy : float
+            Energy value for which the intensity is calculated.
+        X : float
+            Horizontal position for calculation.
+        Y : float
+            Vertical position for calculation.
+
+        Returns
+        -------
+        arrI : numpy.ndarray
+            Intensity flat array.
+        intervals : list
+            Intervals of dependencies; list of mesh ranges. Each range follows
+            the format [Start, Fin, n]. Example: [xi, xf, nx]
+        """
+        idx_pol = {'linH':0,'sigma':0,'linV':1,'pi':1,'lin45':2,'lin135':3,
                    'circR':4,'circL':5,
                    'total':6}.get(pol)
         idx_type = {'SE I':0,'ME I':1,'SE F':2,'ME F':3,
                     'SE P':4,'SE ReE':5,'SE ImE':6,
                     'SE Fluence':7,'SE J':8}.get(intType)
-        idx_coord = {'e':0,'x':1,'y':2,'xy':3,'ex':4,'ey':5,'exy':6}.get(coords)
+        idx_coord={'e':0,'x':1,'y':2,'xy':3,'ex':4,'ey':5,'exy':6}.get(coords)
 
-        if None not in [idx_pol,idx_type,idx_coord]:
-
-            N = np.prod([getattr(self.mesh, f'n{coord}') for coord in coords])
-            intervals = [[getattr(self.mesh,f'{coord}Start'),
-                        getattr(self.mesh,f'{coord}Fin'),
-                        getattr(self.mesh,f'n{coord}')] for coord in coords]
-
-            isPhase = intType=='SE P'
-            arrI = np.zeros(N, dtype=np.float64 if isPhase else np.float32)
-
-            srwl.CalcIntFromElecField(arrI, self,
-                                      idx_pol, idx_type, idx_coord,
-                                      energy, X, Y)
-
-            return arrI, intervals
-
-        else:
+        if None in [idx_pol,idx_type,idx_coord]:
             raise ValueError('Invalid arguments! Check their writing.')
 
-    #todo: nao funciona 'SE J'
-    def calc_intensity(self, coords, energy, X, Y,
-                       polarization='total',intType='SE'):
+        N = np.prod([getattr(self.wfr.mesh, f'n{coord}') for coord in coords])
+        intervals = [[getattr(self.wfr.mesh,f'{coord}Start'),
+                    getattr(self.wfr.mesh,f'{coord}Fin'),
+                    getattr(self.wfr.mesh,f'n{coord}')] for coord in coords]
 
+        isPhase = intType=='SE P'
+
+        arrI = np.zeros(N, dtype=np.float64 if isPhase else np.float32)
+        arrI: np.ndarray = srwl.CalcIntFromElecField(
+            arrI, self.wfr, idx_pol, idx_type, idx_coord, energy, X, Y
+        )
+
+        return arrI, intervals
+
+    #todo: aceitar polarization='sigma' e 'pi' tambem
+    def calc_intensity(self,
+            coords:_Coordinate,
+            energy:float,
+            X:float,
+            Y:float,
+            polarization:_Polarization='total',
+            intType:_IntensityI='SE'
+        ):
+        """
+        Calculate the intensity of the radiation wavefront.
+
+        Parameters
+        ----------
+        coords : {'e', 'x', 'y', 'xy', 'ex', 'ey', 'exy'}
+            Coordinates for calculation, like 'x', 'y', or combinations of
+            them, like 'x-y'.
+        energy : float
+            Energy value for which the intensity is calculated. Taken into
+            account for coords `x`, `y` and `xy`.
+        X : float
+            Horizontal position for calculation. Taken into account for
+            coords `e`, `y` and `ey`.
+        Y : float
+            Vertical position for calculation. Taken into account for
+            coords `e`, `x` and `ex`.
+        polarization : {'total', 'linH', 'linV', 'lin45', 'lin135', 'circR',
+            'circL'}, optional\n
+            The polarization of the radiation. Defaults to 'total'.
+        intType : {'SE', 'ME', 'SE Fluence', 'SE J'}, optional
+            Intensity type. Defaults to 'SE'.
+
+            * 'SE' -- Single-electron intensity.
+            * 'ME' -- Multi-electron intensity.
+            * 'SE Fluence' -- Single-electron fluence, i.e., intensity
+            integrated over energy.
+            * 'SE J' -- Single-electron mutual intensity. Not avaiable yet!
+
+        Returns
+        -------
+        arrI : numpy.ndarray
+            Intensity flat array.
+        intervals : list
+            Intervals of coordinates; list of ranges. Each range follows the
+            format [coordsStart, coordsFin, nCoords]. Example: [xi, xf, nx]
+
+        Notes
+        -----
+        The function also allows pass more than one coords to be calculated
+        separately. Examples: coords='x-y', coords='x-xy', coords='e-xy'.
+        For these cases, the returns are list of returns for each coords.
+
+        """
         if intType in ['SE','ME']:
             intType += ' I'
-        else:
-            q, inten = intType.split()
-            if (q=='SE') and (inten not in ['Fluence','J']):
-                raise ValueError('Invalid intensity type!')
-            
+        elif intType == 'SE J':
+            return "SRW C++ calculation apparently is not well finished, then \
+                    the mutual intensity is not available yet."
+        elif intType != 'SE Fluence':
+            raise ValueError('Invalid intensity type!')
+
         coords_lst = coords.split('-')
 
         if len(coords_lst) == 1:
-            return self.IntFromElecField(polarization, intType, coords, energy, X, Y)
+            return self.IntFromElecField(
+                polarization, intType, coords, energy, X, Y
+            )
         else:
-            return [self.IntFromElecField(polarization, intType, coord, energy, X, Y)
-                        for coord in coords_lst]
+            return [
+                self.IntFromElecField(polarization,intType,coord,energy,X,Y)
+                for coord in coords_lst
+            ]
 
-    #todo: nao funciona xy
-    def calc_flux(self, coords, energy, X, Y,
-                  polarization='total',intType='SE'):
-        
+    def calc_flux(self,
+            polarization:_Polarization='total',
+            intType:_IntensityF='SE'
+        ):
+        """
+        Calculate the flux of the radiation wavefront.
+
+        Parameters
+        ----------
+        polarization : {'total', 'linH', 'linV', 'lin45', 'lin135', 'circR',
+            'circL'}, optional\n
+            Polarization of the radiation. Defaults to 'total'.
+        intType : {'SE', 'ME'}, optional
+            Flux type. Defaults to 'SE'.
+
+        Notes
+        -----
+        The flux is calculated by integrating the intensity of the wavefront
+        on its spatial window. Therefore, the only dependency allowed is
+        coords='e'. Because of that, fix energy and transverse position X or Y
+        is not necessary.
+
+        """
         if intType in ['SE','ME']:
             intType += ' F'
         else:
             raise ValueError('Invalid flux type!')
 
-        coords_lst = coords.split('-')
+        coords = 'e'
+        energy = 0; X = 0; Y = 0 # dummy values; not used
         
-        if len(coords_lst) == 1:
-            return self.IntFromElecField(polarization, intType, coords, energy, X, Y)
-        else:
-            return [self.IntFromElecField(polarization, intType, coord, energy, X, Y)
-                        for coord in coords_lst]
+        return self.IntFromElecField(polarization, intType, coords, energy,X,Y)
 
-    def calc_electric_field(self, part, coords, energy, X, Y, polarization='total'):
-        
+
+    def calc_electric_field(self,
+            part:_Part,
+            coords:_Coordinate,
+            energy:float,
+            X:float,
+            Y:float,
+            polarization:_Polarization='total'
+        ):
+        """
+        Calculate the electric field components of the radiation wavefront.
+
+        Parameters
+        ----------
+        part : {'phase', 're', 'im', 'all'}
+            Part of the electric field to be calculated.
+            
+            * 'phase' -- phase of the electric field.
+            * 're' -- real part of the electric field.
+            * 'im' -- imaginary part of the electric field.
+            * 'all' -- all options of electric field.
+
+        coords : {'e', 'x', 'y', 'xy', 'ex', 'ey', 'exy'}
+            Coordinates for calculation, like 'x', 'y', or combinations of
+            them, like 'x-y'.
+        energy : float
+            Energy value for which the intensity is calculated. Taken into
+            account for coords `x`, `y` and `xy`.
+        X : float
+            Horizontal position for calculation. Taken into account for
+            coords `e`, `y` and `ey`.
+        Y : float
+            Vertical position for calculation. Taken into account for
+            coords `e`, `x` and `ex`.
+        polarization : {'total', 'linH', 'linV', 'lin45', 'lin135', 'circR',
+            'circL'}, optional\n
+            Polarization of the radiation. Defaults to 'total'.
+
+        Returns
+        -------
+        arrI : numpy.ndarray
+            Intensity flat array.
+        intervals : list
+            Intervals of coordinates; list of ranges. Each range follows the
+            format [coordsStart, coordsFin, nCoords]. Example: [xi, xf, nx].
+
+        Notes
+        -----
+        For part='all', the returned list of nested list will be nested with
+        each part, i.e., a list as [re, im, phase].
+
+        """
         if part=='all':
 
             intType_lst = ['SE ReE','SE ImE','SE P']
@@ -361,7 +481,7 @@ class SynchrotronRadiation(srw.SRWLWfr):
                             for coord in coords_lst]
                             for intType in intType_lst]
 
-        intType = {'phase':'SE P','re':'SE ReE','im':'SE ImE'}[part]
+        intType = {'phase':'SE P', 're':'SE ReE', 'im':'SE ImE'}[part]
         coords_lst = coords.split('-')
 
         if len(coords_lst) == 1:
@@ -372,26 +492,61 @@ class SynchrotronRadiation(srw.SRWLWfr):
 
     @staticmethod
     def unwrap_phase(wrapped_phase: np.ndarray) -> np.ndarray:
-
-        if wrapped_phase is None:
-            return False
-        
+        """
+        Unwraps phase 1D or 2D array. Unwrapping is stack the intervals of 2pi
+        of phase values.
+        """
         if wrapped_phase.ndim == 1:
             unwrapped_phase =  np.unwrap(wrapped_phase)
         elif wrapped_phase.ndim == 2:
-            unwrapped_phase =  np.unwrap(np.unwrap(wrapped_phase, axis=0), axis=1)
-
+            unwrapped_phase = np.unwrap(np.unwrap(wrapped_phase,axis=0),axis=1)
         return unwrapped_phase
     
     @staticmethod
     def wrap_phase(unwrapped_phase: np.ndarray) -> np.ndarray:
-
-        if unwrapped_phase is None:
-            return False
-        
+        """Wraps phase 1D or 2D array into the range [-pi,pi]."""
         wrapped_phase = ((unwrapped_phase-np.pi) % (2*np.pi)) - np.pi
-
         return wrapped_phase
+    
+
+    #todo: aceitar apenas numero, para poder contar so um plano ou segmento
+    def count_points(self,
+            xlim:_Lim=None,
+            ylim:_Lim=None,
+            elim:_Lim=None
+        ) -> int:
+        """
+        Counts the number of points within specified limits across horizontal
+        and vertical positions and energy for the wavefront.
+
+        Parameters
+        ----------
+        xlim : array, optional
+            Horizontal range. Defaults to the full range.
+        ylim : array, optional
+            Vertical range. Defaults to the full range.
+        elim : array, optional
+            Energy range. Defaults to the full range.
+
+        """
+        mesh = self.wfr.mesh
+        xi, xf, nx = mesh.xStart, mesh.xFin, mesh.nx
+        yi, yf, ny = mesh.yStart, mesh.yFin, mesh.ny
+        ei, ef, ne = mesh.eStart, mesh.eFin, mesh.ne
+
+        x = np.linspace(xi,xf,nx)
+        y = np.linspace(yi,yf,ny)
+        e = np.linspace(ei,ef,ne)
+
+        if not xlim: xlim = (xi,xf)
+        if not ylim: ylim = (yi,yf)
+        if not elim: elim = (ei,ef)
+
+        maskx = (xlim[0] <= x) & (x <= xlim[1])
+        masky = (ylim[0] <= y) & (y <= ylim[1])
+        maske = (elim[0] <= e) & (e <= elim[1])
+
+        return np.sum(maskx) * np.sum(masky) * np.sum(maske)
         
 
     '''
@@ -444,6 +599,4 @@ class SynchrotronRadiation(srw.SRWLWfr):
             arrI, intervals = 
 
     '''
-
-
 

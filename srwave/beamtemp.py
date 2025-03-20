@@ -100,8 +100,8 @@ class Beam(srw.SRWLPartBeam):
         print('Energy spread',f'{self.arStatMom2[10]}')
         print('')
 
-    def __repr__(self):
-        pass
+    # def __repr__(self):
+    #     pass
     
     # size = moment() # teria que ser decorator pra passar logo o getter, que vai
     # receber direcao e ainda tirar sqrt

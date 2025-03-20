@@ -5,6 +5,7 @@ import numpy as np
 
 from . import radiation_source as rs
 from . import opt_elements as oe
+from . import mag_elements as me
 
 
 
@@ -50,9 +51,11 @@ class PinholeLine(rs.SynchrotronRadiation):
             Dissipation filter material. Default to Al, Aluminum.
         thickness : float, optional
             Dissipation filter thickness [m]. Default to 1e-3 m.
-        
         """
-        super().__init__(energy, d, x, y, field = {'BM':[B,L]})
+        bm = me.BendingMagnet(B,L)
+        fields = me.MagnetCnt(magnets=[bm],field_type='bending')
+        super().__init__(energy, d, x, y, fields = fields)
+        self.calc_wfr()
 
         self.load_beam("carcara")
 
@@ -63,7 +66,7 @@ class PinholeLine(rs.SynchrotronRadiation):
 
         self.beamline = rs.Beamline(line=[self.filter,self.aperture,self.screen])
 
-        self.propagateWfr(self.beamline)
+        self.propagate_wfr(self.beamline)
 
 
 
@@ -106,7 +109,10 @@ class ToroidalMirrorLine(rs.SynchrotronRadiation):
             avoid edge radiation effects. For reference, SIRIUS B1 is 0.853 m.
 
         """
-        super().__init__(energy, d, x, y, field = {'BM':[B,L]})
+        bm = me.BendingMagnet(B,L)
+        fields = me.MagnetCnt(magnets=[bm],field_type='bending')
+        super().__init__(energy, d, x, y, fields = fields)
+        self.calc_wfr()
 
         self.load_beam("carcara")
 
@@ -118,7 +124,7 @@ class ToroidalMirrorLine(rs.SynchrotronRadiation):
 
         bl = rs.Beamline(line=[self.mask,self.mirror,self.screen])
 
-        self.propagateWfr(beamline=bl)
+        self.propagate_wfr(beamline=bl)
 
 
 
@@ -127,7 +133,6 @@ class Carcara(rs.SynchrotronRadiation):
 
     def __init__(self,apertx,aperty,xc=0,yc=0,energy=11e3,d=17,D=17,
                  mirror_error=''):
-        
         """
         Carcara beamline.
 
@@ -145,14 +150,12 @@ class Carcara(rs.SynchrotronRadiation):
             Distance from mirror to screen [m]. Default: 17 m.
         mirror_error : string, optional
             Type of mirror error. Options: 'zeiss', 'meas'. Default: no error.
-
         """
-        
         w = np.linspace(-3,3,200)*1e-3
-        B = 0.5642
-        L = 0.853
-
-        super().__init__(energy=energy, d=d, x=w, y=w, field = {'BM':[B,L]})
+        bm = me.BendingMagnet(B=0.5642,L=0.853)
+        fields = me.MagnetCnt(magnets=[bm],field_type='bending')
+        super().__init__(energy=energy, d=d, x=w, y=w, fields=fields)
+        self.calc_wfr()
 
         self.load_beam("carcara")
 
@@ -190,7 +193,7 @@ class Carcara(rs.SynchrotronRadiation):
 
         bl = rs.Beamline(line=line)
 
-        self.propagateWfr(beamline=bl)
+        self.propagate_wfr(beamline=bl)
 
 
 
@@ -209,7 +212,7 @@ def caustic(SR: rs.SynchrotronRadiation, dists,
         
         screen = oe.Drift(dist=d)
         bl = rs.Beamline(line=screen)
-        SR.propagateWfr(beamline=bl, store_steps=False)
+        SR.propagate_wfr(beamline=bl, store_steps=False)
 
         arrIxn, [rangexn] = SR.calc_intensity(coord,energy,X,Y)
 

@@ -6,6 +6,8 @@ import scipy.constants as cte
 from scipy.interpolate import interp1d
 from scipy.optimize import curve_fit
 
+# from .radiation_source import SynchrotronRadiation
+
 
 
 
@@ -47,13 +49,18 @@ def find_zeros(pos, data):
     return zeros
 
 
-def critical_energy(E,B):
-    """E: accel energy [eV]; B: bending field [T]"""
-    E0 = cte.electron_mass*cte.c**2/cte.e # eV
+def wavelength_to_energy(wl):
+    """
+    wl : float
+        wavelength [m]
+    """
+    return (cte.h*cte.c)/(cte.e*wl)
+
+def calc_gamma(E):
+    """E: accelerator energy"""
+    E0 = cte.m_e*cte.c**2/cte.e # eV
     gamma = E/E0
-    rho = (gamma*cte.electron_mass)*cte.c/(cte.e*B)
-    wc = (3/2)*(cte.c/rho)*(gamma**3)
-    return cte.hbar*wc/cte.e
+    return gamma
 
 
 
@@ -63,8 +70,6 @@ def resize_1d(x0,y0,x):
     f = interp1d(x0,y0)
     return f(x)
 
-def wfr_count_points(xlim,ylim,elim):
-    pass
 
 def convolution():
     pass
