@@ -26,13 +26,15 @@ _UnitXY = Literal['m','cm','mm','um']
 
 #todo: colocar coords permitidas apenas as que contem 'e'
 def plot_spectrum(SR: rs.SynchrotronRadiation,
+        # intensity configuration arguments #
         X:float,
         Y:float,
         coords:_CoordSpectrum='e',
         polarization='total',
         intType='SE',
+        # plot configuration arguments #
         ax=None,
-        show=True,
+        legend=None,
         **kwargs
     ):
 
@@ -62,6 +64,8 @@ def plot_spectrum(SR: rs.SynchrotronRadiation,
         'title', 'xlabel', 'ylabel', 'xlim', 'ylim', 'xscale', 'yscale' are
         also accepted as keyword arguments.
     """
+    show = False if ax else True
+
     if not ax:
         ax = plt.subplot()
     
@@ -80,22 +84,26 @@ def plot_spectrum(SR: rs.SynchrotronRadiation,
                                        polarization,intType)
     e = np.linspace(*rangee)
 
-    ax.plot(e*1e-3,arrI)
+    ax.plot(e*1e-3,arrI,**kwargs)
     
     ax.grid()
 
+    if legend:
+        ax.legend()
     if show:
         plt.show()
 
 
 #todo: testar comportamento de kwargs e nao apagar setting se ja foi feito antes
 #?: deixar plotar so' caracteristicas espaciais, ou com energia tambem?
+#todo: energia, X e Y nao obrigatorios
+#todo: assumir que X e Y ja sao 0 e quem quiser deixar diferente vai e muda
 def plot_wfr_inten(SR: rs.SynchrotronRadiation,
         # intensity configuration arguments #
         coords:_Coordinate,
-        energy:float,
-        X:float,
-        Y:float,
+        energy:float=0,
+        X:float=0,
+        Y:float=0,
         polarization:_Polarization='total',
         intType:_IntensityI='SE',
         # data manipulation arguments #

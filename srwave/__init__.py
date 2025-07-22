@@ -1,8 +1,11 @@
 
-# from . import light_sources
-# from . import radiation_source
-# from . import beamlines
-# from . import utils
+from . import light_sources
+from . import radiation_source
+from . import opt_elements
+from . import mag_elements
+from . import rad_plots
+from . import beamlines
+from . import utils
 
 
 from importlib.metadata import version

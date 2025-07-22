@@ -5,7 +5,7 @@ import scipy.constants as cte
 
 import xraylib
 import srwpy.srwlib as srw
-from optlnls.surface import SRW_figure_error
+# from optlnls.surface import SRW_figure_error, from_shadow_to_matrix
 
 
 _PropParams = typing.Literal['auto_rs_before', 'auto_rs_after', 'auto_rs_prec',
@@ -103,7 +103,7 @@ class Drift(OpticalElement):
         self.srw_opt = srw.SRWLOptD(dist,*args,**kwargs)
 
 
-class DissipationFilter(OpticalElement):
+class AbsorptionFilter(OpticalElement):
 
     def __init__(self,x,y,energy,thickness,material,density=None,*args,**kwargs):
         super().__init__()
@@ -218,13 +218,25 @@ class GaussianFilter(OpticalElement):
         return t
 
 
-class Aperture(OpticalElement):
+class Slit(OpticalElement):
 
     def __init__(self,Dx,Dy,xc=0.0,yc=0.0,shape='r'):
         super().__init__()
 
         self.srw_opt = srw.SRWLOptA(_shape = shape, #'r': rectangle
                                         _ap_or_ob = 'a', #'a': aperture
+                                        _Dx = Dx, #"Width [m]"
+                                        _Dy = Dy, #"Height [m]"
+                                        _x = xc, # horizontal center [m]
+                                        _y = yc) # vertical center [m]
+        
+class Obstacle(OpticalElement):
+
+    def __init__(self,Dx,Dy,xc=0.0,yc=0.0,shape='r'):
+        super().__init__()
+
+        self.srw_opt = srw.SRWLOptA(_shape = shape, #'r': rectangle
+                                        _ap_or_ob = 'o', #'a': aperture
                                         _Dx = Dx, #"Width [m]"
                                         _Dy = Dy, #"Height [m]"
                                         _x = xc, # horizontal center [m]
@@ -259,11 +271,19 @@ class PlaneMirror(OpticalElement):
 class ToroidalMirror(OpticalElement):
 
     def __init__(self,ang,tang_len,sag_len,R_tang,R_sag,*args,**kwargs):
+        """
+        Toroidal mirror optical element.
+
+        Parameters
+        ----------
+        ang : float
+            Grazing angle of the incident and reflected light over the mirror
+        """
         super().__init__()
         
         self.srw_opt = srw.SRWLOptMirTor(_rt = R_tang, #"Tangential Radius [m]"
-                                             _rs = R_sag, #"Sagittal Radius [m]"
-                                             *args,**kwargs)
+                                         _rs = R_sag, #"Sagittal Radius [m]"
+                                         *args,**kwargs)
         
         self.srw_opt.set_dim_sim_meth(
             _size_tang = tang_len, #"Tangential Size [m]"
@@ -273,22 +293,192 @@ class ToroidalMirror(OpticalElement):
             _treat_in_out = 1 # 1: input and output wfr at center of mirror
         )
         self.srw_opt.set_orient(
-            _nvx = -np.sqrt(1-ang**2), # horizontal coordinate of central normal vector
+            _nvx = np.cos(ang), # horizontal coordinate of central normal vector
             _nvy = 0, # vertical coordinate of central normal vector
-            _nvz = -ang, # longitudinal coordinate of central normal vector
-            _tvx = ang, # horizontal coordinate of central tangential vector
+            _nvz = -np.sin(ang), # longitudinal coordinate of central normal vector
+            _tvx = np.sin(ang), # horizontal coordinate of central tangential vector
             _tvy = 0, # vertical coordinate of central tangential vector
             _x = 0, # horizontal position of mirror center [m]
             _y = 0 # vertical position of mirror center [m]
         )
 
+    @property
+    def normal(self):
+        n = np.array([self.srw_opt.nvx,self.srw_opt.nvy,self.srw_opt.nvz])
+        return n
+    
+    @property
+    def tangent(self):
+        # tvz = -(self.srw_opt.nvx*self.srw_opt.tvx + self.srw_opt.nvy*self.srw_opt.tvy)/self.srw_opt.nvz
+        tvz = np.sqrt(1-self.srw_opt.tvx**2-self.srw_opt.tvy**2)
+        t = np.array([self.srw_opt.tvx,self.srw_opt.tvy,tvz])
+        return t
+    
+    @property
+    def center(self):
+        c = np.array([self.srw_opt.x,self.srw_opt.y])
+        return c
+
+
+    def Rx(self,ang):
+        """
+        ang: rotation angle with respect to the normal vector [rad]
+        """
+        k = self.normal
+        K = np.array([[0,-k[2],k[1]],
+                      [k[2],0,-k[0]],
+                      [-k[1],k[0],0]])
+        R = np.eye(3) + np.sin(ang)*K + (1-np.cos(ang))*(K@K)
+        tangent = R @ self.tangent
+        center = self.center
+
+        self.srw_opt.set_orient(
+            _nvx = k[0],
+            _nvy = k[1],
+            _nvz = k[2],
+            _tvx = tangent[0],
+            _tvy = tangent[1],
+            _x = center[0],
+            _y = center[1]
+        )
+
+    def Ry(self,ang):
+        """
+        ang: rotation angle with respect to the y axis [rad]
+        """
+        R = np.array([[ np.cos(ang),0,np.sin(ang)],
+                      [ 0,          1,          0],
+                      [-np.sin(ang),0,np.cos(ang)]])
+        normal  = R @ self.normal
+        tangent = R @ self.tangent
+        center = self.center
+
+        self.srw_opt.set_orient(
+            _nvx = normal[0],
+            _nvy = normal[1],
+            _nvz = normal[2],
+            _tvx = tangent[0],
+            _tvy = tangent[1],
+            _x = center[0],
+            _y = center[1]
+        )
+
+    def Rz(self,ang):
+        """
+        ang: rotation angle with respect to the tangent vector [rad]
+        """
+        k = self.tangent
+        K = np.array([[0,-k[2],k[1]],
+                      [k[2],0,-k[0]],
+                      [-k[1],k[0],0]])
+        R = np.eye(3) + np.sin(ang)*K + (1-np.cos(ang))*(K@K)
+        normal  = R @ self.normal
+        center = self.center
+
+        self.srw_opt.set_orient(
+            _nvx = normal[0],
+            _nvy = normal[1],
+            _nvz = normal[2],
+            _tvx = k[0],
+            _tvy = k[1],
+            _x = center[0],
+            _y = center[1]
+        )
+
+    def T(self,dx=0,dy=0):
+        """
+        dx: translation along the incident light x axis [m]
+        dy: translation along the incident light y axis [m]
+        """
+        normal = self.normal
+        tangent = self.tangent
+        center = self.center
+        x = center[0] + dx
+        y = center[1] + dy
+
+        self.srw_opt.set_orient(
+            _nvx = normal[0],
+            _nvy = normal[1],
+            _nvz = normal[2],
+            _tvx = tangent[0],
+            _tvy = tangent[1],
+            _x = x,
+            _y = y
+        )
+
 
 class MirrorError(OpticalElement):
 
-    def __init__(self,filename,unit,ang,orientation,L,W):
-        super().__init__()
+    # def __init__(self,filename,unit,ang,orientation,L,W):
+    #     super().__init__()
 
-        self.srw_opt = SRW_figure_error(filename,unit,ang,ang,orientation,L=L,W=W)
+    #     self.srw_opt = SRW_figure_error(filename,unit,ang,ang,orientation,L=L,W=W)
+
+    def __init__(self,heights,htype,ang,orientation):
+        """
+        Surface error heights optical element.
+
+        Parameters
+        ----------
+        heights : array
+            Heights profile with the correspondent surface positions.
+                
+                In case of 2D errors, the array has the following format:
+                element [0,0]: ignored
+                first row, [0,1:]: tangential positions [m]
+                first column, [1:,0]: sagital positions [m]
+                matrix [1:,1:]: height errors [m]
+                
+                In case of 1D errors, the array has the following format:
+                first column: tangential positions [m]
+                second column: height errors [m]
+        htype : {'1D', '2D'}
+            Dimension of the height errors profile. Errors in one line of the
+            mirror is 1D, errors in area is 2D.
+        ang : float
+            Grazing angle of the incident and reflected light over the mirror
+        """
+        super().__init__()
+        ang_in = ang_out = ang
+
+        heights = np.asarray(heights)
+        
+        if htype=='1D':
+            self.srw_opt = srw.srwl_opt_setup_surf_height_1d(heights, orientation, ang_in, ang_out)
+            self.x       = heights[:,0]
+            self.y       = np.zeros(shape=self.x.shape)
+            self.profile = heights[:,1]
+        elif htype=='2D':
+            self.srw_opt = srw.srwl_opt_setup_surf_height_2d(heights, orientation, ang_in, ang_out)
+            self.x       = heights[0 ,1:]
+            self.y       = heights[1:,0 ]
+            self.profile = heights[1:,1:]
+        else:
+            raise ValueError("Not valid heights type!")
+
+
+    @classmethod
+    def FromFile1D(cls,file_path,unit,ang,orientation):
+        heights = np.loadtxt(file_path) * unit
+        return cls(heights,'1D',ang,orientation)
+
+    @classmethod
+    def FromFile2D(cls,file_path,unit,ang,orientation,format='shadow'):
+        
+        if format=='shadow':
+
+            with open(file_path) as f:
+                npts = np.array(f.readline().rstrip('\n').split(),dtype=int)
+                z = np.array(f.readline().rstrip('\n').split(),dtype=float) * unit
+                heights = np.loadtxt(f) * unit
+            heights = np.vstack((np.insert(z,0,0.0),heights))
+        
+        # heights = from_shadow_to_matrix(filename,unit)
+        
+        return cls(heights,'2D',ang,orientation)
+        
+    
+
 
 
 class Lens(OpticalElement):

@@ -196,6 +196,10 @@ class SynchrotronRadiation:
         self.wfr.mesh.yStart = yi #initial vertical position [m]
         self.wfr.mesh.yFin   = yf #final vertical position [m]
         self.wfr.mesh.zStart = d  #longitudinal position for initial wfr [m]
+
+    def window_limits(self):
+        mesh = self.wfr.mesh
+        return np.array([mesh.xStart,mesh.xFin,mesh.yStart,mesh.yFin])
         
 
     def set_wfr_elec_field(self, arrEx, arrEy):

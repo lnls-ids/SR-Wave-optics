@@ -94,6 +94,7 @@ def fw_calc(x,y,hfactor):
     zeros = find_zeros(x,y-hfactor*np.max(y))
     return zeros[-1]-zeros[0], zeros
 
+#todo: inverter x, y nos argumentos e se nao passar x, calcula para os indices de y
 def fwhm_calc(x,y):
     """
     Calculates the Full Width at Half Maximum (fwhm) of some data.
@@ -109,10 +110,10 @@ def fwhm_calc(x,y):
     return fw_calc(x,y,0.5)
 
 def fwhm_SR(SR,
-            coord:typing.Literal['x','y'],energy:float,X:float,Y:float,
+            coords:typing.Literal['x','y'],energy:float,X:float=0,Y:float=0,
             polarization='total',intType='SE'):
     """FWHM of PSF [um]"""
-    arrIxn, [rangexn] = SR.calc_intensity(coord,energy,X,Y,polarization,intType)
+    arrIxn, [rangexn] = SR.calc_intensity(coords,energy,X,Y,polarization,intType)
     xn = np.linspace(*rangexn)*1e6
 
     fwhm, _ = fwhm_calc(xn,arrIxn)
@@ -126,9 +127,9 @@ def fwhm_SR(SR,
 def gaussian(x, a, x0, sigma):
     return a * np.exp(-(x - x0) ** 2 / (2 * sigma ** 2))
 
-def gaussian_fit(x, data):
+def fitgaussian(x, data):
     """
-    Fits a gaussian curve to data points using least squares.
+    Fits a gaussian curve to data points using scipy.optimize.curve_fit method.
 
     Parameters
     ----------

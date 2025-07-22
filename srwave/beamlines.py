@@ -59,8 +59,8 @@ class PinholeLine(rs.SynchrotronRadiation):
 
         self.load_beam("carcara")
 
-        self.filter = oe.DissipationFilter(x,y,energy,thickness,material)
-        self.aperture = oe.Aperture(apertx,aperty)
+        self.filter = oe.AbsorptionFilter(x,y,energy,thickness,material)
+        self.aperture = oe.Slit(apertx,aperty)
         self.aperture.prop_params['ra'] = 10.0
         self.screen = oe.Drift(D)
 
@@ -116,7 +116,7 @@ class ToroidalMirrorLine(rs.SynchrotronRadiation):
 
         self.load_beam("carcara")
 
-        self.mask = oe.Aperture(apertx,aperty)
+        self.mask = oe.Slit(apertx,aperty)
         self.mirror = oe.ToroidalMirror(ang,tang_len,sag_len,R_tang,R_sag)
         self.screen = oe.Drift(D)
         self.screen.prop_params['re'] = 2.0
@@ -159,7 +159,7 @@ class Carcara(rs.SynchrotronRadiation):
 
         self.load_beam("carcara")
 
-        self.mask = oe.Aperture(4e-3,4e-3)
+        self.mask = oe.Slit(4e-3,4e-3)
         self.mask.prop_params['ra'] = 4.0
         self.mirror = oe.ToroidalMirror(
             ang=18.78e-3,tang_len=0.22,sag_len=0.008,
@@ -183,7 +183,7 @@ class Carcara(rs.SynchrotronRadiation):
 
         self.space = oe.Drift(dist=4.4)
         self.space.prop_params['propagator'] = 'Quadratic'
-        self.aperture1 = oe.Aperture(apertx,aperty,xc=xc,yc=yc)
+        self.aperture1 = oe.Slit(apertx,aperty,xc=xc,yc=yc)
         self.screen = oe.Drift(dist=D-4.4)
         self.screen.prop_params['ra'] = 2.0
         self.screen.prop_params['re'] = 2.0
