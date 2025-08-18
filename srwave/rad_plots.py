@@ -98,6 +98,7 @@ def plot_spectrum(SR: rs.SynchrotronRadiation,
 #?: deixar plotar so' caracteristicas espaciais, ou com energia tambem?
 #todo: energia, X e Y nao obrigatorios
 #todo: assumir que X e Y ja sao 0 e quem quiser deixar diferente vai e muda
+#todo: projx e projy somando cada eixo complementar
 def plot_wfr_inten(SR: rs.SynchrotronRadiation,
         # intensity configuration arguments #
         coords:_Coordinate,

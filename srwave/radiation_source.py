@@ -4,6 +4,7 @@ import copy
 from typing import Optional, Literal, Union, overload
 
 import numpy as np
+import matplotlib.pyplot as plt
 
 from . import opt_elements as oe
 from . import mag_elements as me
@@ -33,7 +34,7 @@ _IntensityF = Literal['SE', 'ME']
 _Part = Literal['phase', 're', 'im', 'all']
 _Coordinate = Literal['e', 'x', 'y', 'xy', 'ex', 'ey', 'exy']
 _Lim = Union[list[float],tuple[float],None]
-
+_UnitXY = Literal['m','cm','mm','um']
 
 
 
@@ -91,7 +92,7 @@ class Beamline:
 
 
 
-
+#todo: metodo para return todos os dados importantes da wavefront para ela poder ser inicializavel em outro lugar
 class SynchrotronRadiation:
 
     def __init__(self,
@@ -551,7 +552,153 @@ class SynchrotronRadiation:
         maske = (elim[0] <= e) & (e <= elim[1])
 
         return np.sum(maskx) * np.sum(masky) * np.sum(maske)
+    
+
+    #todo: testar comportamento de kwargs e nao apagar setting se ja foi feito antes
+    #?: deixar plotar so' caracteristicas espaciais, ou com energia tambem?
+    #todo: energia, X e Y nao obrigatorios
+    #todo: assumir que X e Y ja sao 0 e quem quiser deixar diferente vai e muda
+    #todo: projx e projy somando cada eixo complementar
+    def plot_intensity(self,
+            # intensity configuration arguments #
+            coords:_Coordinate,
+            energy:float=0,
+            X:float=0,
+            Y:float=0,
+            polarization:_Polarization='total',
+            intType:_IntensityI='SE',
+            # data manipulation arguments #
+            unit:_UnitXY='um',
+            normalize=False,
+            output=False,
+            # plot configuration arguments #
+            ax=None,
+            legend=None,
+            **kwargs
+        ):
+        """
+        Plot the intensity of the synchrotron radiation wavefront.
+
+        Parameters
+        ----------
+        coords : {'x', 'y', 'xy', 'ex', 'ey', 'exy'}
+            Coordinates for plotting, either 'x', 'y', or 'xy'.
+        energy : float
+            Energy value for which the intensity is calculated.
+        X,Y : float
+            Horizontal and vertical position for calculation.
+        polarization : str, optional
+            The polarization of the radiation. Defaults to 'total'.
+        intType : str, optional
+            Intensity type. Defaults to 'SE'.
+        unit : {'m', 'cm', 'mm', 'um'}, optional
+            Unit of the transverse spatial coordinates. Defaults to 'um'.
+        normalize : bool, optional
+            Normalize the intensity. Defaults to False.
+        output : bool, optional
+            Return the intensity and intervals. Defaults to False.
+        ax : matplotlib.axes.Axes, optional
+            Matplotlib Axes to plot on. Defaults to None.
+        legend : str, optional
+            Label for the plot legend. Defaults to None.
+        **kwargs : dict, optional
+            Additional keyword arguments passed to the plotting functions.
+            `xlim`, `ylim`, `title`, `xlabel`, `ylabel` are also accepted
+            as keyword arguments.
+
+        Returns:
+            If `output` is True, returns the intensity and intervals.
+        """
+        show = False if ax else True
+
+        #?: assim ou plt.subplots ?
+        if not ax:
+            ax = plt.subplot()
+
+        unit = {'m':1,'cm':1e2,'mm':1e3,'um':1e6}[unit]
+
+        settings = {setting: kwargs.pop(setting)
+                    for setting in ['xlim','ylim','title','xlabel','ylabel']
+                        if setting in kwargs}
+        ax.set(**settings)
+
+        arrI, intervals = self.calc_intensity(coords,energy,X,Y,
+                                              polarization,intType)
+
+        if len(coords) == 1:
+            
+            rangei, = intervals
+            xi = np.linspace(*rangei)
+
+            normalization = np.max(arrI) if normalize else 1
+
+            ax.plot(xi*unit,arrI/normalization,label=legend,**kwargs)
+
+        elif len(coords) == 2:
+
+            [rangex,rangey] = intervals
+            xi, xf, nx, yi, yf, ny = *rangex, *rangey
+            arrI = np.array(arrI).reshape(ny,nx)
+            limits = np.array([xi,xf,yi,yf])*unit
+
+            im = ax.imshow(arrI,extent=limits,origin='lower',**kwargs)
+            if 'cmap' not in kwargs:
+                im.set_cmap('gray')
         
+        if legend:
+            ax.legend()
+        if show:
+            plt.show()
+
+        if output:
+            return arrI, intervals
+
+    def plot_electric_field(self,
+            coords: str,
+            energy: float,
+            X: float,
+            Y: float,
+            output = False,
+            polarization='total',
+            part='re',
+            ax=None,xlim=None,ylim=None,xlabel='',ylabel='',show=True,**kwargs
+        ):
+
+        if not ax:
+            _, ax = plt.subplots()
+
+        arrE, intervals = self.calc_electric_field(part, coords, energy, X, Y,
+                                                    polarization)
+
+        if len(coords) == 1:
+            
+            rangei, = intervals
+            xi = np.linspace(*rangei)
+
+            ax.plot(xi*1e6,arrE)
+
+        elif len(coords) == 2:
+
+            [rangex,rangey] = intervals
+            xi, xf, nx, yi, yf, ny = *rangex, *rangey
+            arrE = np.array(arrE).reshape(ny,nx)
+
+            limits = np.array([xi,xf,yi,yf])*1e6
+            ax.imshow(arrE,extent=limits,origin='lower',cmap='gray',**kwargs)
+
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        
+        if show:
+            plt.show()
+
+        if output:
+            return arrE, intervals
+
+
+
 
     '''
     @classmethod

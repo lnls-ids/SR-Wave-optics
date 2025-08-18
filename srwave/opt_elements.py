@@ -94,7 +94,7 @@ class OpticalElement:
         """List of available diffraction propagators for the optical element."""
         return list(self.prop_params.propagators)
 
-
+#todo: distance
 class Drift(OpticalElement):
 
     def __init__(self,dist,*args,**kwargs):
@@ -267,7 +267,7 @@ class PlaneMirror(OpticalElement):
             _y = 0 # vertical position of mirror center [m]
         )
 
-
+#todo: tang_length, tang_radius
 class ToroidalMirror(OpticalElement):
 
     def __init__(self,ang,tang_len,sag_len,R_tang,R_sag,*args,**kwargs):
