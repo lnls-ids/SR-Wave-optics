@@ -13,6 +13,7 @@ _PropParams = typing.Literal['auto_rs_before', 'auto_rs_after', 'auto_rs_prec',
                              'ra_v', 're_v', 'p1', 'p2', 'p3'] #, 'p4', 'p5', 'p6', 'p7', 'p8']
 
 
+#todo: set method to change prop params
 class Propagation:
 
     propagators = {'Standard': 0, 'Quadratic': 1, 'QuadraticSpecial': 2,
@@ -23,6 +24,15 @@ class Propagation:
               'ra_h', 're_h', 'ra_v', 're_v',
               'p1', 'p2', 'p3']   #, 'p4', 'p5', 'p6', 'p7', 'p8']
 
+    #[ 0]: Auto-Resize (1) or not (0) Before propagation
+    #[ 1]: Auto-Resize (1) or not (0) After propagation
+    #[ 2]: Relative Precision for propagation with Auto-Resizing (1. is nominal)
+    #[ 3]: Propagator ; Allow (1) or not (0) for semi-analytical treatment of the quadratic (leading) phase terms at the propagation
+    #[ 4]: Do any Resizing on Fourier side, using FFT, (1) or not (0)
+    #[ 5]: Horizontal Range modification factor at Resizing (1. means no modification)
+    #[ 6]: Horizontal Resolution modification factor at Resizing
+    #[ 7]: Vertical Range modification factor at Resizing
+    #[ 8]: Vertical Resolution modification factor at Resizing
     #[ 9]: Type of wavefront Shift before Resizing (not yet implemented); default is 0
     #[10]: New Horizontal wavefront Center position after Shift (not yet implemented); default is 0
     #[11]: New Vertical wavefront Center position after Shift (not yet implemented); default is 0
@@ -81,7 +91,6 @@ class Propagation:
             yield self._prop_params[key]
     
 
-
 class OpticalElement:
 
     def __init__(self):
@@ -89,19 +98,19 @@ class OpticalElement:
         self.srw_opt = srw.SRWLOpt()
         self.prop_params = Propagation()
 
+    #?: por que definir isso?
     @property
     def propagators(self) -> list[str]:
         """List of available diffraction propagators for the optical element."""
         return list(self.prop_params.propagators)
 
-#todo: distance
+
 class Drift(OpticalElement):
 
-    def __init__(self,dist,*args,**kwargs):
+    def __init__(self, distance, *args, **kwargs):
         super().__init__()
         
-        self.srw_opt = srw.SRWLOptD(dist,*args,**kwargs)
-
+        self.srw_opt = srw.SRWLOptD(distance, *args, **kwargs)
 
 class AbsorptionFilter(OpticalElement):
 
@@ -163,7 +172,6 @@ class AbsorptionFilter(OpticalElement):
 
         return t
 
-
 class GaussianFilter(OpticalElement):
 
     def __init__(self,x,y,energy,e_center,e_sigma,*args,**kwargs):
@@ -217,7 +225,6 @@ class GaussianFilter(OpticalElement):
 
         return t
 
-
 class Slit(OpticalElement):
 
     def __init__(self,Dx,Dy,xc=0.0,yc=0.0,shape='r'):
@@ -241,7 +248,6 @@ class Obstacle(OpticalElement):
                                         _Dy = Dy, #"Height [m]"
                                         _x = xc, # horizontal center [m]
                                         _y = yc) # vertical center [m]
-
 
 class PlaneMirror(OpticalElement):
 
@@ -406,7 +412,6 @@ class ToroidalMirror(OpticalElement):
             _y = y
         )
 
-
 class MirrorError(OpticalElement):
 
     # def __init__(self,filename,unit,ang,orientation,L,W):
@@ -476,10 +481,6 @@ class MirrorError(OpticalElement):
         # heights = from_shadow_to_matrix(filename,unit)
         
         return cls(heights,'2D',ang,orientation)
-        
-    
-
-
 
 class Lens(OpticalElement):
 
@@ -493,7 +494,6 @@ class Lens(OpticalElement):
     def lens_from_dists(cls,dist_src_lens,dist_lens_screen):
         f = dist_src_lens*dist_lens_screen/(dist_src_lens+dist_lens_screen)
         return cls(fx=f,fy=f)
-
 
 class FresnelZonePlate(OpticalElement):
 

@@ -1,178 +1,181 @@
 
 import json
 import copy
-from typing import Optional, Literal, Union, overload
+from array import array
+from typing import Optional, Literal, Union
 
 import numpy as np
 import matplotlib.pyplot as plt
 
-from . import opt_elements as oe
-from . import mag_elements as me
-from .beamtemp import Beam
-
 import srwpy.srwlib as srw
 import srwpy.srwlpy as srwl
 
-
+from . import magnets
+from .beamtemp import Beam
 
 
 # SynchrotronRadiation
-_Num_Arr = Union[float,list[float],np.ndarray]
-_Arr = Union[list[float],np.ndarray]
+_Num_Arr = Union[float, list[float], np.ndarray]
+_Arr = Union[list[float], np.ndarray]
 _Trajectory = Optional[srw.SRWLPrtTrj]
-_MagCnt = Optional[me.MagnetCnt]
+_MagCnt = Optional[magnets.MagnetCnt]
 _Beam = Optional[Beam]
-_Polarization = Literal['linH', 'sigma', 'linV', 'pi',
-                        'lin45', 'lin135',
-                        'circR', 'circL',
-                        'total']
-_Intensity = Literal['SE I', 'ME I', 'SE Fluence', 'SE J',
-                     'SE F', 'ME F',
-                     'SE P', 'SE ReE', 'SE ImE']
+_Polarization = Literal[
+    'linH',
+    'sigma',
+    'linV',
+    'pi',
+    'lin45',
+    'lin135',
+    'circR',
+    'circL',
+    'total',
+]
+_Intensity = Literal[
+    'SE I',
+    'ME I',
+    'SE Fluence',
+    'SE J',
+    'SE F',
+    'ME F',
+    'SE P',
+    'SE ReE',
+    'SE ImE',
+]
 _IntensityI = Literal['SE', 'ME', 'SE Fluence', 'SE J']
 _IntensityF = Literal['SE', 'ME']
 _Part = Literal['phase', 're', 'im', 'all']
 _Coordinate = Literal['e', 'x', 'y', 'xy', 'ex', 'ey', 'exy']
-_Lim = Union[list[float],tuple[float],None]
-_UnitXY = Literal['m','cm','mm','um']
+_CoordSpectrum = Literal['e', 'ex', 'ey', 'exy']
+_Lim = Union[list[float], tuple[float], bool]
+_Prefix = Literal['G', 'M', 'k', 'h', 'da', '', 'd', 'c', 'm', 'u', 'n']
 
+invfieldtype_map = {
+    0: 'manual',
+    1: 'undulator',
+    2: 'bending',
+}
 
+pol_map = {
+    'linH': 0,
+    'sigma': 0,
+    0: 0,
+    'linV': 1,
+    'pi': 1,
+    1: 1,
+    'lin45': 2,
+    2: 2,
+    'lin135': 3,
+    3: 3,
+    'circR': 4,
+    4: 4,
+    'circL': 5,
+    5: 5,
+    'total': 6,
+    6: 6,
+}
+calctype_map = {
+    'SE I': 0,
+    0: 0,
+    'ME I': 1,
+    1: 1,
+    'SE F': 2,
+    2: 2,
+    'ME F': 3,
+    3: 3,
+    'SE P': 4,
+    4: 4,
+    'SE ReE': 5,
+    5: 5,
+    'SE ImE': 6,
+    6: 6,
+    'SE Fluence': 7,
+    7: 7,
+    'SE J': 8,
+    8: 8,
+}
+part_map = {
+    're': 'SE ReE',
+    'im': 'SE ImE',
+    'phase': 'SE P',
+}
+coords_map = {
+    'e': 0,
+    0: 0,
+    'x': 1,
+    1: 1,
+    'y': 2,
+    2: 2,
+    'xy': 3,
+    3: 3,
+    'ex': 4,
+    4: 4,
+    'ey': 5,
+    5: 5,
+    'exy': 6,
+    6: 6,
+}
 
-# possivelmente criar beamline sem nada vai dar erro ao acessar atributo
-class Beamline:
-
-    @overload
-    def __init__(self,line:Optional[oe.OpticalElement]=...): ...
-    @overload
-    def __init__(self,line:Optional[list[oe.OpticalElement]]=...): ...
-
-    def __init__(self,line=None):
-
-        self.wfr = None 
-        
-        self.opt_elements = line
-
-
-    @property
-    def opt_elements(self) -> list[oe.OpticalElement]:
-        """List of optical elements in the beamline"""
-        return self._opt_elements
-    
-    @opt_elements.setter
-    def opt_elements(self,elements):
-
-        self._opt_elements = []
-
-        if isinstance(elements, (list,tuple)):
-            for element in elements:
-                self.add_opt_element(element)
-        elif elements:
-            self.add_opt_element(elements)
-            
-
-    @property
-    def srw_opts(self) -> list[srw.SRWLOpt]:
-        """List of SRW optical elements in the beamline"""
-        return [element.srw_opt for element in self.opt_elements]
-
-    @property
-    def props_params(self) -> list[list]:
-        """List of propagation parameters of the beamline optical elements"""
-        return [list(element.prop_params) for element in self.opt_elements]
-
-    def add_opt_element(self,element:oe.OpticalElement):
-
-        if not isinstance(element,oe.OpticalElement):
-            raise TypeError("Optical Element type" + \
-                            f" '{type(element).__name__}' " + \
-                            "not supported")
-        
-        self._opt_elements.append(element)
-
-
+prefix_map = {
+    'G': 1e-9,
+    'M': 1e-6,
+    'k': 1e-3,
+    'h': 1e-2,
+    'da': 1e-1,
+    '': 1,
+    'd': 1e1,
+    'c': 1e2,
+    'm': 1e3,
+    'u': 1e6,
+    'n': 1e9,
+}
+uprefix_map = {
+    'u': r'$\mu$',
+}
+quantity_map = {
+    'SE I': 'Flux Density',
+    'ME I': 'Flux Density',
+    'SE F': 'Flux',
+    'ME F': 'Flux',
+    'phase': 'Phase',
+    're': 'Re E',
+    'im': 'Im E',
+    'SE Fluence': 'Unknown', #*
+    'SE J': 'Unknown', #*
+}
+unit_map = {
+    'SE I': r'ph/s/0.1%bw/mm$^2$',
+    'ME I': r'ph/s/0.1%bw/mm$^2$',
+    'SE F': r'ph/s/0.1%bw',
+    'ME F': r'ph/s/0.1%bw',
+    'phase': 'rad',
+    're': r'sqrt(ph/s/0.1%bw/mm$^2$)',
+    'im': r'sqrt(ph/s/0.1%bw/mm$^2$)',
+    'SE Fluence': 'Unknown', #*
+    'SE J': 'Unknown', #*
+}
 
 
 #todo: metodo para return todos os dados importantes da wavefront para ela poder ser inicializavel em outro lugar
-class SynchrotronRadiation:
+#todo: metodo de str e repr
+class RadiationSource:
 
-    def __init__(self,
-            energy:_Num_Arr,
-            d:float,
-            x:_Num_Arr,
-            y:_Num_Arr,
-            traj:_Trajectory=None,
-            fields:_MagCnt=None,
-            beam:_Beam=None,
-            store_steps=False
-        ):
-        """
-        Basic Synchrotron Radiation class. Calculates radiation wavefront from
-        source and propagates through optical elements.
-
-        Parameters
-        ----------
-        energy : float or array
-            Photon energy [eV].
-        d : float
-            Distance from source [m].
-        x, y : float or array
-            Horizontal and vertical position [m].
-        traj : srw.SRWLPrtTrj or int
-            Trajectory of the particle.
-        field : srw.SRWLMagFldC or int
-            Magnetic fields exerced over the particle.
-        source : {'undulator', 'bending'}, optional
-            Magnetic field type.
-        beam : Beam, optional
-            Particle beam.
-        store_steps : bool, optional
-            Store light source wavefront or not.
-        """
+    def __init__(self, energy: _Num_Arr, x: _Num_Arr, y: _Num_Arr, d: float):
         self.wfr = srw.SRWLWfr()
-        self.wfr.partBeam = Beam() if beam is None else beam
-
-        self.trajectory = traj
-
-        self.fields = fields
-
-        self.precisions = {'method':fields.fieldtype,'prec':0.005,'zstart':0.0,
-                           'zend':0.0,'np':50000,'usetermin':True,'sampling':0}
-
-        if np.isscalar(x): x = [x]
-        if np.isscalar(y): y = [y]
-        if np.isscalar(energy): energy = [energy]
-
-        self.ExCnt = []
-        self.EyCnt = []
-
-        self.set_mesh(x,y,energy,d)
-    
+        self.set_mesh(energy, x, y, d)
 
 
+    @staticmethod
+    def _is_equally_spaced(arr):
+        arr = np.atleast_1d(arr)
+        if arr.size < 3:
+            return True
+        diffs = np.diff(arr)
+        return np.allclose(diffs, diffs[0])
 
-    def __str__(self):
-        pass
-
-    def __repr__(self):
-        pass
-
-
-    def setBeam(self,eqparams):
-        self.wfr.partBeam = Beam(eqparams)
-
-    def load_beam(self, beam="carcara", isTwiss=True):
-        mode = 'twiss' if isTwiss else 'rms'
-        beams_file = __file__.replace("radiation_source.py","beams.json")
-        with open(beams_file) as b:
-            beams = json.load(b)
-        eqparams = list(beams[beam][mode].values())
-        self.wfr.partBeam = Beam(eqparams=eqparams)
-
-
-
-    def set_mesh(self,x:_Arr,y:_Arr,e:_Arr,d:float):
-        """
-        Initializes the wavefront mesh, i.e., the radiation sampling of the
+    #todo: pass docstring to numpy format
+    def set_mesh(self, e: _Arr, x: _Arr, y: _Arr, d: float):
+        """Initializes the wavefront mesh, i.e., the radiation sampling of the
         initial wavefront (before optical elements)
 
         Args:
@@ -181,94 +184,52 @@ class SynchrotronRadiation:
             e (array): Photon energies [eV].
             d (float): Longitudinal position for initial wavefront [m].
         """
+        nTot = 2 # real and imag part for each point
+        nMom = 11 # 11 moments for each energy point
+        for coord, u in zip(['e', 'x', 'y'], [e, x, y]):
+            u = np.atleast_1d(u)
+            if not self._is_equally_spaced(u):
+                raise ValueError(f'The {coord} array must be equally spaced!')
+            ui, uf, nu = u[0], u[-1], len(u)
+            setattr(self.wfr.mesh, f'{coord}Start', ui) # initial value
+            setattr(self.wfr.mesh, f'{coord}Fin', uf) # final value
+            setattr(self.wfr.mesh, f'n{coord}', nu) # number of points
+            nTot *= nu
+            if coord=='e':
+                nMom *= nu
+        self.wfr.mesh.zStart = d # longitudinal position for initial wfr [m]
 
-        xi, xf, nx = x[0], x[-1], len(x)
-        yi, yf, ny = y[0], y[-1], len(y)
-        ei, ef, ne = e[0], e[-1], len(e)
+        self.wfr.arEx = np.zeros(nTot, dtype=np.float32)
+        self.wfr.arEy = np.zeros(nTot, dtype=np.float32)
 
-        # number of points of photon energy, horizontal and vertical positions
-        self.wfr.allocate(ne,nx,ny)
+        self.wfr.arMomX = np.zeros(nMom, dtype=np.float64)
+        self.wfr.arMomY = np.zeros(nMom, dtype=np.float64)
 
-        # mesh
-        self.wfr.mesh.eStart = ei #initial energy
-        self.wfr.mesh.eFin   = ef #final energy
-        self.wfr.mesh.xStart = xi #initial horizontal position [m]
-        self.wfr.mesh.xFin   = xf #final horizontal position [m]
-        self.wfr.mesh.yStart = yi #initial vertical position [m]
-        self.wfr.mesh.yFin   = yf #final vertical position [m]
-        self.wfr.mesh.zStart = d  #longitudinal position for initial wfr [m]
-
-    def window_limits(self):
+    def window_limits(self, unitprefix: _Prefix = 'u'):
         mesh = self.wfr.mesh
-        return np.array([mesh.xStart,mesh.xFin,mesh.yStart,mesh.yFin])
-        
+        factor = prefix_map[unitprefix]
+        return factor*np.array([mesh.xStart, mesh.xFin, mesh.yStart, mesh.yFin])
 
-    def set_wfr_elec_field(self, arrEx, arrEy):
-        self.arEx = copy.copy(arrEx)
-        self.arEy = copy.copy(arrEy)
+    def CalcElecField(self):
+        raise NotImplementedError
 
+    def calc_wfr(self):
+        self.CalcElecField()
 
-
-    def CalcElecFieldSR(self, store_steps=False):
-        precisions = list(self.precisions.values())
-
-        srwl.CalcElecFieldSR(self.wfr,self.trajectory,self.fields.cnt,
-                             precisions)
-
-        if store_steps:
-            self.ExCnt = [copy.copy(self.arEx)]
-            self.EyCnt = [copy.copy(self.arEy)]
-
-    def calc_wfr(self, store_steps=False):
-        self.CalcElecFieldSR(store_steps)
-
-    # def calcWfr(self, partTraj, magFldCnt, precisions, store_steps=True):
-
-    #     srwl.CalcElecFieldSR(self, partTraj, magFldCnt, precisions)
-
-    #     if store_steps:
-    #         self.ExCnt = [copy.copy(self.arEx)]
-    #         self.EyCnt = [copy.copy(self.arEy)]
-
-    def PropagElecField(self, oe_arr, pp_arr):
-        optBl = srw.SRWLOptC(oe_arr,pp_arr)
-        srwl.PropagElecField(self.wfr, optBl)
-
-    def propagate_wfr(self, beamline:Beamline, store_steps=False):
-
-        if not beamline.opt_elements:
-            return False
-
-        oe_arr, pp_arr = beamline.srw_opts, beamline.props_params
-
-        if not store_steps:
-            self.PropagElecField(oe_arr, pp_arr)
-
-        else:
-            for srwopt, prop_params in zip(oe_arr, pp_arr):
-                
-                self.PropagElecField([srwopt],[prop_params])
-
-                self.ExCnt.append(self.arEx)
-                self.EyCnt.append(self.arEy)
-
-        return True
-
-
+    #todo: mudar X, Y para x, y
     def IntFromElecField(self,
-            pol:_Polarization,
-            intType:_Intensity,
-            coords:_Coordinate,
-            energy:float,
-            X:float,
-            Y:float
+            pol: _Polarization,
+            calctype: _Intensity,
+            coords: _Coordinate,
+            energy: float,
+            X: float,
+            Y: float
         ):
-        """
-        Wrapper of SRW's srwlpy.CalcIntFromElecField() function.
+        """Wrapper of SRW's srwlpy.CalcIntFromElecField() function.
 
         Parameters
         ----------
-        pol : {'linH', 'linV', 'lin45', 'lin135', 'circR', 'circL', 'total'}
+        pol : {'linH' or 'sigma', 'linV' or 'pi', 'lin45', 'lin135', 'circR', 'circL', 'total'}
             Polarization of the radiation.
         intType : {'SE I', 'ME I', 'SE F', 'ME F', 'SE P', 'SE ReE', 'SE ImE', 
             'SE Fluence', 'SE J'}\n
@@ -290,42 +251,39 @@ class SynchrotronRadiation:
             Intervals of dependencies; list of mesh ranges. Each range follows
             the format [Start, Fin, n]. Example: [xi, xf, nx]
         """
-        idx_pol = {'linH':0,'sigma':0,'linV':1,'pi':1,'lin45':2,'lin135':3,
-                   'circR':4,'circL':5,
-                   'total':6}.get(pol)
-        idx_type = {'SE I':0,'ME I':1,'SE F':2,'ME F':3,
-                    'SE P':4,'SE ReE':5,'SE ImE':6,
-                    'SE Fluence':7,'SE J':8}.get(intType)
-        idx_coord={'e':0,'x':1,'y':2,'xy':3,'ex':4,'ey':5,'exy':6}.get(coords)
+        
+        idx_pol = pol_map.get(pol)
+        idx_type = calctype_map.get(calctype)
+        idx_coords = coords_map.get(coords)
 
-        if None in [idx_pol,idx_type,idx_coord]:
+        if None in [idx_pol, idx_type, idx_coords]:
             raise ValueError('Invalid arguments! Check their writing.')
 
         N = np.prod([getattr(self.wfr.mesh, f'n{coord}') for coord in coords])
-        intervals = [[getattr(self.wfr.mesh,f'{coord}Start'),
-                    getattr(self.wfr.mesh,f'{coord}Fin'),
-                    getattr(self.wfr.mesh,f'n{coord}')] for coord in coords]
+        intervals = [[getattr(self.wfr.mesh, f'{coord}Start'),
+                    getattr(self.wfr.mesh, f'{coord}Fin'),
+                    getattr(self.wfr.mesh, f'n{coord}')] for coord in coords]
 
-        isPhase = intType=='SE P'
+        isPhase = calctype == 'SE P'
+        floatXX = np.float64 if isPhase else np.float32
 
-        arrI = np.zeros(N, dtype=np.float64 if isPhase else np.float32)
-        arrI: np.ndarray = srwl.CalcIntFromElecField(
-            arrI, self.wfr, idx_pol, idx_type, idx_coord, energy, X, Y
+        arr = np.zeros(N, dtype=floatXX)
+        arr = srwl.CalcIntFromElecField(
+            arr, self.wfr, idx_pol, idx_type, idx_coords, energy, X, Y
         )
 
-        return arrI, intervals
+        return arr, intervals
 
-    #todo: aceitar polarization='sigma' e 'pi' tambem
+    #todo: mudar X, Y para x, y
     def calc_intensity(self,
-            coords:_Coordinate,
-            energy:float,
-            X:float,
-            Y:float,
-            polarization:_Polarization='total',
-            intType:_IntensityI='SE'
+            coords: _Coordinate,
+            energy: float = 0,
+            X: float = 0,
+            Y: float = 0,
+            polarization: _Polarization = 'total',
+            calctype: _IntensityI = 'SE'
         ):
-        """
-        Calculate the intensity of the radiation wavefront.
+        """Calculate the intensity of the radiation wavefront.
 
         Parameters
         ----------
@@ -341,7 +299,7 @@ class SynchrotronRadiation:
         Y : float
             Vertical position for calculation. Taken into account for
             coords `e`, `x` and `ex`.
-        polarization : {'total', 'linH', 'linV', 'lin45', 'lin135', 'circR',
+        polarization : {'total', 'linH' or 'sigma', 'linV' or 'pi', 'lin45', 'lin135', 'circR',
             'circL'}, optional\n
             The polarization of the radiation. Defaults to 'total'.
         intType : {'SE', 'ME', 'SE Fluence', 'SE J'}, optional
@@ -368,36 +326,32 @@ class SynchrotronRadiation:
         For these cases, the returns are list of returns for each coords.
 
         """
-        if intType in ['SE','ME']:
-            intType += ' I'
-        elif intType == 'SE J':
+        if calctype in ['SE', 'ME']:
+            calctype += ' I'
+        elif calctype == 'SE J':
             return "SRW C++ calculation apparently is not well finished, then \
                     the mutual intensity is not available yet."
-        elif intType != 'SE Fluence':
+        elif calctype != 'SE Fluence':
             raise ValueError('Invalid intensity type!')
 
         coords_lst = coords.split('-')
 
-        if len(coords_lst) == 1:
-            return self.IntFromElecField(
-                polarization, intType, coords, energy, X, Y
-            )
-        else:
-            return [
-                self.IntFromElecField(polarization,intType,coord,energy,X,Y)
-                for coord in coords_lst
-            ]
+        results = [
+            self.IntFromElecField(polarization, calctype, coords, energy, X, Y)
+            for coords in coords_lst
+        ]
+
+        return results[0] if len(results)==1 else results
 
     def calc_flux(self,
-            polarization:_Polarization='total',
-            intType:_IntensityF='SE'
+            polarization: _Polarization = 'total',
+            calctype: _IntensityF = 'SE'
         ):
-        """
-        Calculate the flux of the radiation wavefront.
+        """Calculate the flux of the radiation wavefront.
 
         Parameters
         ----------
-        polarization : {'total', 'linH', 'linV', 'lin45', 'lin135', 'circR',
+        polarization : {'total', 'linH' or 'sigma', 'linV' or 'pi', 'lin45', 'lin135', 'circR',
             'circL'}, optional\n
             Polarization of the radiation. Defaults to 'total'.
         intType : {'SE', 'ME'}, optional
@@ -411,27 +365,26 @@ class SynchrotronRadiation:
         is not necessary.
 
         """
-        if intType in ['SE','ME']:
-            intType += ' F'
+        if calctype in ['SE', 'ME']:
+            calctype += ' F'
         else:
             raise ValueError('Invalid flux type!')
 
         coords = 'e'
-        energy = 0; X = 0; Y = 0 # dummy values; not used
-        
-        return self.IntFromElecField(polarization, intType, coords, energy,X,Y)
+        energy = 0; X = 0; Y = 0  # dummy values; not used
 
+        return self.IntFromElecField(polarization, calctype, coords, energy, X, Y)
 
+    #todo: mudar X, Y para x, y
     def calc_electric_field(self,
-            part:_Part,
-            coords:_Coordinate,
-            energy:float,
-            X:float,
-            Y:float,
-            polarization:_Polarization='total'
+            part: _Part,
+            coords: _Coordinate,
+            energy: float = 0,
+            X: float = 0,
+            Y: float = 0,
+            polarization: _Polarization = 'total'
         ):
-        """
-        Calculate the electric field components of the radiation wavefront.
+        """Calculate the electric field components of the radiation wavefront.
 
         Parameters
         ----------
@@ -455,7 +408,7 @@ class SynchrotronRadiation:
         Y : float
             Vertical position for calculation. Taken into account for
             coords `e`, `x` and `ex`.
-        polarization : {'total', 'linH', 'linV', 'lin45', 'lin135', 'circR',
+        polarization : {'total', 'linH' or 'sigma', 'linV' or 'pi', 'lin45', 'lin135', 'circR',
             'circL'}, optional\n
             Polarization of the radiation. Defaults to 'total'.
 
@@ -473,232 +426,505 @@ class SynchrotronRadiation:
         each part, i.e., a list as [re, im, phase].
 
         """
-        if part=='all':
+        part_lst = part.split('-')
+        if 'all' in part: part_lst = ['re', 'im', 'phase']
+        calctype_lst = [part_map[part] for part in part_lst]
 
-            intType_lst = ['SE ReE','SE ImE','SE P']
-            coords_lst = coords.split('-')
-
-            if len(coords_lst) == 1:
-                return [self.IntFromElecField(polarization, intType, coords, energy, X, Y)
-                            for intType in intType_lst]
-            else:
-                return [[self.IntFromElecField(polarization, intType, coord, energy, X, Y)
-                            for coord in coords_lst]
-                            for intType in intType_lst]
-
-        intType = {'phase':'SE P', 're':'SE ReE', 'im':'SE ImE'}[part]
         coords_lst = coords.split('-')
+    
+        results = []
+        for coords in coords_lst:
 
-        if len(coords_lst) == 1:
-            return self.IntFromElecField(polarization, intType, coords, energy, X, Y)
-        else:
-            return [self.IntFromElecField(polarization, intType, coord, energy, X, Y)
-                        for coord in coords_lst]
+            output = [
+                self.IntFromElecField(polarization, calctype, coords, energy, X, Y)
+                for calctype in calctype_lst
+            ]
+
+            arrsE = [arrE for arrE, _ in output]
+            if len(arrsE)==1: arrsE = arrsE[0]
+            intervals = output[0][1]
+
+            results.append([arrsE, intervals])
+
+        return results[0] if len(results)==1 else results
+
+    
+
+
 
     @staticmethod
     def unwrap_phase(wrapped_phase: np.ndarray) -> np.ndarray:
-        """
-        Unwraps phase 1D or 2D array. Unwrapping is stack the intervals of 2pi
+        """Unwraps phase 1D or 2D array. Unwrapping is stack the intervals of 2pi
         of phase values.
         """
         if wrapped_phase.ndim == 1:
-            unwrapped_phase =  np.unwrap(wrapped_phase)
+            unwrapped_phase = np.unwrap(wrapped_phase)
         elif wrapped_phase.ndim == 2:
-            unwrapped_phase = np.unwrap(np.unwrap(wrapped_phase,axis=0),axis=1)
+            unwrapped_phase = np.unwrap(np.unwrap(wrapped_phase, axis=0), axis=1)
         return unwrapped_phase
-    
+
     @staticmethod
     def wrap_phase(unwrapped_phase: np.ndarray) -> np.ndarray:
         """Wraps phase 1D or 2D array into the range [-pi,pi]."""
         wrapped_phase = ((unwrapped_phase-np.pi) % (2*np.pi)) - np.pi
         return wrapped_phase
-    
 
-    #todo: aceitar apenas numero, para poder contar so um plano ou segmento
     def count_points(self,
-            xlim:_Lim=None,
-            ylim:_Lim=None,
-            elim:_Lim=None
+            xlim: _Lim = True,
+            ylim: _Lim = True,
+            elim: _Lim = True
         ) -> int:
-        """
-        Counts the number of points within specified limits across horizontal
-        and vertical positions and energy for the wavefront.
+        """Counts the number of points within specified limits across
+        horizontal and vertical positions and energy of the wavefront.
 
         Parameters
         ----------
-        xlim : array, optional
-            Horizontal range. Defaults to the full range.
-        ylim : array, optional
-            Vertical range. Defaults to the full range.
-        elim : array, optional
-            Energy range. Defaults to the full range.
+        xlim : array or bool, optional
+            Horizontal range.
+        ylim : array or bool, optional
+            Vertical range.
+        elim : array or bool, optional
+            Energy range.
 
+        Notes
+        -----
+        By default, True, the full range of points at some dimension are
+        counted. If the dimension limits is False, it is not counted.
         """
         mesh = self.wfr.mesh
-        xi, xf, nx = mesh.xStart, mesh.xFin, mesh.nx
-        yi, yf, ny = mesh.yStart, mesh.yFin, mesh.ny
-        ei, ef, ne = mesh.eStart, mesh.eFin, mesh.ne
 
-        x = np.linspace(xi,xf,nx)
-        y = np.linspace(yi,yf,ny)
-        e = np.linspace(ei,ef,ne)
+        counts = 1
 
-        if not xlim: xlim = (xi,xf)
-        if not ylim: ylim = (yi,yf)
-        if not elim: elim = (ei,ef)
+        for u, ulim in zip(['e', 'x', 'y'], [elim, xlim, ylim]):
+            ui = getattr(mesh,f'{u}Start')
+            uf = getattr(mesh,f'{u}Fin')
+            nu = getattr(mesh,f'n{u}')
+            uarr = np.linspace(ui, uf, nu)
 
-        maskx = (xlim[0] <= x) & (x <= xlim[1])
-        masky = (ylim[0] <= y) & (y <= ylim[1])
-        maske = (elim[0] <= e) & (e <= elim[1])
+            if ulim:
+                if ulim is True: ulim = (ui, uf)
+                mask = (ulim[0] <= uarr) & (uarr <= ulim[1])
+                counts *= np.sum(mask)
 
-        return np.sum(maskx) * np.sum(masky) * np.sum(maske)
-    
+        return counts
 
-    #todo: testar comportamento de kwargs e nao apagar setting se ja foi feito antes
-    #?: deixar plotar so' caracteristicas espaciais, ou com energia tambem?
-    #todo: energia, X e Y nao obrigatorios
-    #todo: assumir que X e Y ja sao 0 e quem quiser deixar diferente vai e muda
-    #todo: projx e projy somando cada eixo complementar
-    def plot_intensity(self,
-            # intensity configuration arguments #
-            coords:_Coordinate,
-            energy:float=0,
-            X:float=0,
-            Y:float=0,
-            polarization:_Polarization='total',
-            intType:_IntensityI='SE',
-            # data manipulation arguments #
-            unit:_UnitXY='um',
-            normalize=False,
-            output=False,
-            # plot configuration arguments #
+    @staticmethod
+    def _infer_units(coords, calctype, xunitprefix, yunitprefix, normalize):
+
+        xunitprefix = uprefix_map.get(xunitprefix, xunitprefix)
+        yunitprefix = uprefix_map.get(yunitprefix, yunitprefix)
+        prefixes = [xunitprefix, yunitprefix]
+
+        labels = []
+
+        for coord, prefix in zip(coords, prefixes):
+
+            if coord in ('x', 'y'):
+                label = f'{coord} [{prefix}m]'
+            else: # coord == 'e'
+                label = f'Energy [{prefix}eV]'
+
+            labels.append(label)
+
+        if len(labels)==1:
+            unit = unit_map[calctype] if not normalize else 'a.u.'
+            quantity = quantity_map[calctype]
+            label = f'{quantity} [{unit}]'
+            labels.append(label)
+
+        return labels
+
+    # ainda fazer de plot #
+    # X arg para output
+    #todo: arg para proj integrada ou cut
+    #todo: hintings de cada funcao
+    #todo: docstrings de cada funcao
+    #todo: not allow 'all' option in electric field
+    # X ajeitar pseudo raw plot func
+    #todo: checar plot de fluencia e flux e unidade
+    # X create unitprefix shortcut for set x and y unit prefix together for spatial plot
+    #todo: nao permitir coords ser list, bem como part para elecfield
+
+    def plot_result(self,
+            arr,
+            intervals,
+            coords: str,
+            calctype: str,
+            xunitprefix: _Prefix = 'u',
+            yunitprefix: _Prefix = 'u',
             ax=None,
-            legend=None,
             **kwargs
         ):
         """
-        Plot the intensity of the synchrotron radiation wavefront.
-
-        Parameters
-        ----------
-        coords : {'x', 'y', 'xy', 'ex', 'ey', 'exy'}
-            Coordinates for plotting, either 'x', 'y', or 'xy'.
-        energy : float
-            Energy value for which the intensity is calculated.
-        X,Y : float
-            Horizontal and vertical position for calculation.
-        polarization : str, optional
-            The polarization of the radiation. Defaults to 'total'.
-        intType : str, optional
-            Intensity type. Defaults to 'SE'.
-        unit : {'m', 'cm', 'mm', 'um'}, optional
-            Unit of the transverse spatial coordinates. Defaults to 'um'.
-        normalize : bool, optional
-            Normalize the intensity. Defaults to False.
-        output : bool, optional
-            Return the intensity and intervals. Defaults to False.
-        ax : matplotlib.axes.Axes, optional
-            Matplotlib Axes to plot on. Defaults to None.
-        legend : str, optional
-            Label for the plot legend. Defaults to None.
-        **kwargs : dict, optional
-            Additional keyword arguments passed to the plotting functions.
-            `xlim`, `ylim`, `title`, `xlabel`, `ylabel` are also accepted
-            as keyword arguments.
-
-        Returns:
-            If `output` is True, returns the intensity and intervals.
+        Generic plot utility used by all plot_* methods.
+        
+        Kwargs contains
+        X xlim, ylim, xscale, yscale, title, xlabel, ylabel,
+        X colorbar, grid,
+        X normalize, output, unitprefix,
+        X the other kwargs of ax.plot and ax.imshow : lw , cmap, aspect , label
         """
-        show = False if ax else True
+        output = kwargs.pop('output', False)
+        normalize = kwargs.pop('normalize', False)
 
-        #?: assim ou plt.subplots ?
+        unitprefix = kwargs.pop('unitprefix', None)
+        xunitprefix = unitprefix or xunitprefix
+        yunitprefix = unitprefix or yunitprefix
+
+        ulabel, vlabel = self._infer_units(coords, calctype, xunitprefix, yunitprefix, normalize)
+        kwargs.setdefault('xlabel', ulabel)
+        kwargs.setdefault('ylabel', vlabel)
+
+        show = False if ax else True
         if not ax:
             ax = plt.subplot()
 
-        unit = {'m':1,'cm':1e2,'mm':1e3,'um':1e6}[unit]
-
-        settings = {setting: kwargs.pop(setting)
-                    for setting in ['xlim','ylim','title','xlabel','ylabel']
-                        if setting in kwargs}
+        settings = ['xlim', 'ylim', 'xscale', 'yscale', 'title', 'xlabel', 'ylabel']
+        settings = {setting: kwargs.pop(setting) for setting in settings
+                    if setting in kwargs}
         ax.set(**settings)
 
-        arrI, intervals = self.calc_intensity(coords,energy,X,Y,
-                                              polarization,intType)
-
         if len(coords) == 1:
+            rangeu, = intervals
+            u = np.linspace(*rangeu)
+            ufactor = prefix_map[xunitprefix]
             
-            rangei, = intervals
-            xi = np.linspace(*rangei)
-
-            normalization = np.max(arrI) if normalize else 1
-
-            ax.plot(xi*unit,arrI/normalization,label=legend,**kwargs)
+            maximum = np.max(arr) if normalize else 1
+            useGrid = kwargs.pop('grid', True)
+            ax.plot(ufactor*u, arr/maximum, **kwargs)
+            ax.grid(useGrid)
 
         elif len(coords) == 2:
+            [rangeu, rangev] = intervals
+            ui, uf, nu = rangeu
+            vi, vf, nv = rangev
+            arr = np.array(arr).reshape(nv, nu)
+            ufactor = prefix_map[xunitprefix]
+            vfactor = prefix_map[yunitprefix]
+            limits = [ufactor*ui, ufactor*uf, vfactor*vi, vfactor*vf]
+            cbar = kwargs.pop('colorbar', False)
+            kwargs.setdefault('cmap', 'gray')
+            im = ax.imshow(arr, extent=limits, origin='lower', **kwargs)
+            if cbar:
+                plt.colorbar(im, ax=ax)
 
-            [rangex,rangey] = intervals
-            xi, xf, nx, yi, yf, ny = *rangex, *rangey
-            arrI = np.array(arrI).reshape(ny,nx)
-            limits = np.array([xi,xf,yi,yf])*unit
+        else:
+            raise NotImplementedError("3D plotting not supported yet.")
 
-            im = ax.imshow(arrI,extent=limits,origin='lower',**kwargs)
-            if 'cmap' not in kwargs:
-                im.set_cmap('gray')
-        
-        if legend:
+        if 'label' in kwargs:
             ax.legend()
+
         if show:
             plt.show()
 
         if output:
-            return arrI, intervals
+            return arr, intervals
 
-    def plot_electric_field(self,
-            coords: str,
+    def PlotFromElecField(self,
+            # intensity configuration arguments #
+            pol: _Polarization,
+            calctype: _Intensity,
+            coords: _Coordinate,
             energy: float,
             X: float,
             Y: float,
-            output = False,
-            polarization='total',
-            part='re',
-            ax=None,xlim=None,ylim=None,xlabel='',ylabel='',show=True,**kwargs
+            # data manipulation arguments #
+            xunitprefix: _Prefix = '',
+            yunitprefix: _Prefix = '',
+            # plot configuration arguments #
+            ax=None,
+            **kwargs
         ):
+        """Plot of the radiation wavefront.
 
-        if not ax:
-            _, ax = plt.subplots()
+        Parameters
+        ----------
+        coords : {'e', 'x', 'y', 'xy', 'ex', 'ey', 'exy'}
+            Coordinates for plotting.
+        energy : float
+            Energy value for which the intensity is calculated.
+        X, Y : float
+            Horizontal and vertical position for calculation. Taken in account
+            when the plot of `coords` need to specify some position. For
+            instance, the plot of x, or ex, must be at some coordinate Y.
+        polarization : str, optional
+            The polarization of the radiation. Defaults to 'total'.
+        intType : {'SE I', 'ME', }, optional
+            Intensity type.
+        unit : {'m', 'cm', 'mm', 'um'}, optional
+            Unit of the transverse spatial coordinates. Defaults to 'um'.
+        normalize : bool
+            Normalize the intensity.
+        output : bool, optional
+            Return the intensity and intervals.
+        ax : matplotlib.axes.Axes, optional
+            Matplotlib Axes to plot on.
+        legend : str, optional
+            Label for the plot legend.
+        **kwargs : dict, optional
+            Additional keyword arguments passed to the plotting functions,
+            including `xlim`, `ylim`, `title`, `xlabel` and `ylabel`.
 
-        arrE, intervals = self.calc_electric_field(part, coords, energy, X, Y,
-                                                    polarization)
+        Returns:
+            If `output` is True, same return of the `calc_intensity` method.
+        """
 
-        if len(coords) == 1:
-            
-            rangei, = intervals
-            xi = np.linspace(*rangei)
+        arr, intervals = self.IntFromElecField(pol, calctype, coords, energy, X, Y)
 
-            ax.plot(xi*1e6,arrE)
+        return self.plot_result(arr, intervals, coords, xunitprefix, yunitprefix, ax, **kwargs)
 
-        elif len(coords) == 2:
+    def plot_intensity(self,
+            coords: _Coordinate,
+            energy: float = 0,
+            X: float = 0,
+            Y: float = 0,
+            polarization: _Polarization = 'total',
+            calctype: _IntensityI = 'SE',
+            xunitprefix: _Prefix = 'u',
+            yunitprefix: _Prefix = 'u',
+            ax=None,
+            **kwargs
+        ):
+        """Plot the intensity calculated by `calc_intensity()`."""
+        arrI, intervals = self.calc_intensity(coords, energy, X, Y, polarization, calctype)
 
-            [rangex,rangey] = intervals
-            xi, xf, nx, yi, yf, ny = *rangex, *rangey
-            arrE = np.array(arrE).reshape(ny,nx)
+        calctype += ' I'
 
-            limits = np.array([xi,xf,yi,yf])*1e6
-            ax.imshow(arrE,extent=limits,origin='lower',cmap='gray',**kwargs)
+        return self.plot_result(arrI, intervals, coords, calctype, xunitprefix, yunitprefix,
+                        ax, **kwargs)
 
-        ax.set_xlim(xlim)
-        ax.set_ylim(ylim)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
+    def plot_spectrum(self,
+            # intensity configuration #
+            coords: _CoordSpectrum = 'e',
+            X: float = 0,
+            Y: float = 0,
+            polarization: _Polarization = 'total',
+            calctype: _IntensityI = 'SE',
+            # data manipulation #
+            xunitprefix: _Prefix = 'k',
+            yunitprefix: _Prefix = '',
+            # plot configuration #
+            ax=None,
+            **kwargs
+        ):
+        """Plot the spectral intensity of the radiation wavefront.
+
+        Parameters
+        ----------
+        SR : SynchrotronRadiation
+            Instance of the SynchrotronRadiation class.
+        X,Y : float
+            Horizontal and vertical position for calculation.
+        coords : {'e', 'ex', 'ey', 'exy'}, optional
+            Coordinates for calculation, either 'e', 'ex', 'ey', or 'exy'.
+            Defaults to 'e'.
+        polarization : {'total', 'linH', 'linV', 'lin45', 'lin135', 'circR',
+            'circL'}, optional\n
+            Polarization of the radiation. Defaults to 'total'.
+        intType : {'SE', 'ME', 'SE Fluence', 'SE J'}, optional
+            Intensity type. Defaults to 'SE'.
+        ax : matplotlib.axes.Axes, optional
+            Matplotlib Axes to plot on. Defaults to None.
+        show : bool, optional
+            Display the plot. Defaults to True.
+        **kwargs : dict, optional
+            Additional keyword arguments passed to the plotting functions.
+            'title', 'xlabel', 'ylabel', 'xlim', 'ylim', 'xscale', 'yscale' are
+            also accepted as keyword arguments.
+        """
+
+        if coords not in ['e', 'ex', 'ey', 'exy']:
+            raise ValueError('Not a spectrum plot!')
+
+        energy = 0 # dummy value
+
+        return self.plot_intensity(coords, energy, X, Y, polarization, calctype, xunitprefix, yunitprefix, ax, **kwargs)
+
+    def plot_flux(self,
+            polarization: _Polarization = 'total',
+            calctype: _IntensityF = 'SE',
+            xunitprefix: _Prefix = 'k',
+            ax=None,
+            **kwargs
+        ):
+        """Plot the flux calculated by `calc_flux()`."""
+        arrI, intervals = self.calc_flux(polarization, calctype)
+
+        coords = 'e'  # always energy-dependence for flux
+        yunitprefix = '' # dummy value
+        calctype += ' F'
+
+        return self.plot_result(arrI, intervals, coords, calctype, xunitprefix, yunitprefix, ax, **kwargs)
+
+    def plot_electric_field(self,
+            # intensity configuration
+            part: _Part,
+            coords: _Coordinate,
+            energy: float = 0,
+            X: float = 0,
+            Y: float = 0,
+            polarization: _Polarization = 'total',
+            # data manipulation
+            xunitprefix: _Prefix = 'u',
+            yunitprefix: _Prefix = 'u',
+            # plot configuration #
+            ax=None,
+            **kwargs
+        ):
+        """Plot the electric field components of the radiation wavefront. calculated by `calc_electric_field()`.
         
-        if show:
-            plt.show()
+        Parameters
+        ----------
+        part : {'re', 'im', 'phase'} (not 'all')
+        """
+        arrE, intervals = self.calc_electric_field(part, coords, energy, X, Y, polarization)
 
-        if output:
-            return arrE, intervals
+        return self.plot_result(arrE, intervals, coords, part, xunitprefix, yunitprefix, ax, **kwargs)
 
 
 
+#todo: metodo de str e repr
+#todo: tornar beam obrigatorio
+class SynchrotronRadiation(RadiationSource):
+
+    def __init__(self,
+            energy: _Num_Arr,
+            x: _Num_Arr,
+            y: _Num_Arr,
+            d: float,
+            traj: _Trajectory = None,
+            fields: _MagCnt = None,
+            beam: _Beam = None
+        ):
+        """Basic Synchrotron Radiation class. Calculates radiation wavefront from
+        source and propagates through optical elements.
+
+        Parameters
+        ----------
+        energy : float or array
+            Photon energy [eV].
+        d : float
+            Distance from source [m].
+        x, y : float or array
+            Horizontal and vertical position [m].
+        traj : srw.SRWLPrtTrj or int
+            Trajectory of the particle.
+        field : srw.SRWLMagFldC or int
+            Magnetic fields exerced over the particle.
+        source : {'undulator', 'bending'}, optional
+            Magnetic field type.
+        beam : Beam, optional
+            Particle beam.
+        """
+        super().__init__(energy, x, y, d)
+
+        self.trajectory = traj
+        self.fields = fields
+        self.beam = beam
+        self.wfr.partBeam = Beam() if beam is None else beam #todo: adjust
+
+        self.precisions = {
+            'method': fields.fieldtype,
+            'prec': 0.005,
+            'zstart': 0.0,
+            'zend': 0.0,
+            'npart': 50000,
+            'usetermin': True,
+            'sampling': 0,
+        }
+
+    # def __str__(self):
+
+    #     titlestr = "Synchrotron Radiation\n"
+
+    #     # mesh #
+    #     mesh = self.wfr.mesh
+    #     meshstr = (
+    #         "- - Mesh Grid - -\n"
+    #         f"Photon Energy [keV] : {mesh.eStart*1e-3} -- {mesh.eFin*1e-3} "
+    #         f"({mesh.ne} points)\n"
+    #         f"Horizontal [um]     : {mesh.xStart*1e6} -- {mesh.xFin*1e6} "
+    #         f"({mesh.nx} points)\n"
+    #         f"Vertical [um]       : {mesh.yStart*1e6} -- {mesh.yFin*1e6} "
+    #         f"({mesh.ny} points)\n"
+    #         f"Distance [m]        : {mesh.zStart}\n"
+    #     )
+        
+    #     # beam #
+    #     beam = self.beam
+    #     env = self.wfr.partBeam.arStatMom2
+
+    #     beamstr = (
+    #         "- - - Beam - - -\n"
+    #         f"Charge Energy [GeV]             : {beam.energy*1e-9}\n"
+    #         f"Current [A]                     : {beam.current}\n"
+    #         f"Size RMS (X x Y) [um]           : {env[]*1e6} x {*1e6}\n"
+    #         f"Divergence RMS (X' x Y') [urad] : {*1e6} x {*1e6}\n"
+    #         f"Length RMS (Z) [um]             : {}\n"
+    #         f"Relative energy spread RMS [%]  : {}\n"
+    #     )
+
+    #     # traj #
+    #     trajstr = "- - Trajectory - -\n"
+    #     if self.trajectory:
+    #         trajstr += "\n" # nothing yet
+    #     else:
+    #         trajstr += f"{None}\n"
+
+    #     # mag #
+    #     magstr = "- - Magnetic Field - -\n"
+    #     if self.fields:
+    #         magnet = self.fields.magnets[0]
+    #         fieldtype = invfieldtype_map[self.fields.fieldtype]
+    #         magstr += f"Source     : {fieldtype}\n"
+    #         if fieldtype=='bending':
+    #             magstr += f"Field  [T] : {magnet.B}"
+    #         elif fieldtype=='undulator':
+    #             magstr += (
+    #                 f"Period [mm] : {magnet.period_length}\n"
+    #                 f"Nº periods  : {magnet.nr_periods}\n"
+    #                 f"Kx          : {magnet.K[0]}\n"
+    #                 f"Ky          : {magnet.K[1]}"
+    #             )
+    #     else:
+    #         magstr += f"{None}"
+
+    #     return "\n".join([titlestr, meshstr, beamstr, trajstr, magstr])
+
+    # def __repr__(self):
+    #     mesh = self.wfr.mesh
+    #     return (f"SynchrotronRadiation("
+    #             "d={mesh.zStart}, "
+    #             f"e_start={mesh.eStart}, e_fin={mesh.eFin}, "
+    #             f"fields={self.fields!r}, beam={self.wfr.partBeam!r})")
+    
+    def setBeam(self, eqparams):
+        self.wfr.partBeam = Beam(eqparams)
+
+    def load_beam(self, beam="carcara", isTwiss=True):
+        mode = 'twiss' if isTwiss else 'rms'
+        beams_file = __file__.replace("radiation.py", "beams.json")
+        with open(beams_file) as b:
+            beams = json.load(b)
+        eqparams = list(beams[beam][mode].values())
+        self.wfr.partBeam = Beam(eqparams=eqparams)
+
+    # def set_wfr_elec_field(self, arrEx, arrEy):
+    #     self.arEx = copy.copy(arrEx)
+    #     self.arEy = copy.copy(arrEy)
+
+    def CalcElecField(self):
+        precisions_lst = [
+            self.precisions['method'],
+            self.precisions['prec'],
+            self.precisions['zstart'],
+            self.precisions['zend'],
+            self.precisions['npart'],
+            self.precisions['usetermin'],
+            self.precisions['sampling']
+        ]
+        srwl.CalcElecFieldSR(self.wfr, self.trajectory, self.fields.cnt,
+                             precisions_lst)
 
     '''
     @classmethod
@@ -751,3 +977,120 @@ class SynchrotronRadiation:
 
     '''
 
+
+class GaussianBeam(srw.SRWLGsnBm):
+
+    def __init__(self, energy, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.avgPhotEn = energy
+        self.pulseEn = 0.001
+
+    def set_waist(self, sigX, sigY, sigT, pos=None, ang=None):
+
+        if not pos: pos = [0, 0, 0]
+        if not ang: ang = [0, 0]
+
+        self.x, self.y, self.z = pos
+        self.xp, self.yp = ang
+        self.sigX = sigX
+        self.sigY = sigY
+        self.sigT = sigT
+
+    #todo: test total polarization
+    def set_polarization(self, pol):
+        # if pol=='total':
+        #     raise ValueError("There is no ")
+        idx_pol = pol_map[pol] + 1
+        self.polar = idx_pol
+
+    def set_mode(self, modex, modey):
+        """Set the Hermite-Gauss transverse mode"""
+        self.mx = modex
+        self.my = modey
+
+
+class GaussianRadiation(RadiationSource):
+
+    def __init__(self, energy, x, y, d, gaussianbeam=None):  # , beam):
+        super().__init__(energy, x, y, d)
+
+        self.gaussianbeam = gaussianbeam if gaussianbeam else GaussianBeam(energy)
+
+        # self.wfr.partBeam = Beam() if beam is None else beam
+
+        self.precisions = {'sampling': 0}
+
+    def __str__(self):
+        mesh = self.wfr.mesh
+        gb = self.gaussianbeam
+        
+        return (f"Gaussian Radiation Source\n"
+                f"-------------------------\n"
+                f"Distance:    {mesh.zStart:.4f} m\n"
+                f"Energy:      {gb.avgPhotEn:.2f} eV\n"
+                f"Waist Size:  {gb.sigX*1e6:.2f} x {gb.sigY*1e6:.2f} um\n"
+                f"Waist Pos:   (x={gb.x*1e6:.2f}, y={gb.y*1e6:.2f}) um\n"
+                f"Pulse En:    {gb.pulseEn} J")
+
+    def __repr__(self):
+        return (f"GaussianRadiation(energy={self.gaussianbeam.avgPhotEn}, "
+                f"d={self.wfr.mesh.zStart}, gaussianbeam={self.gaussianbeam!r})")
+
+    def CalcElecField(self):
+        precisions = list(self.precisions.values())
+        srwl.CalcElecFieldGaussian(self.wfr, self.gaussianbeam, precisions)
+
+
+class PointSource(srw.SRWLPtSrc):
+
+    def __init__(self, flux=1, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.flux = flux
+
+
+    def set_position(self, pos):
+        if not pos: pos = [0, 0, 0]
+        self.x, self.y, self.z = pos
+
+    def set_polarization(self, pol):
+        idx_pol = {'linH': 1, 'sigma': 1, 'linV': 2, 'pi': 2, 'lin45': 3, 'lin135': 4,
+                   'circR': 5, 'circL': 6, 'radial':7}[pol]
+        self.polar = idx_pol
+
+
+class PointRadiation(RadiationSource):
+
+    def __init__(self, energy, x, y, d, pointsource=None):  # , beam):
+        super().__init__(energy, x, y, d)
+
+        self.pointsource = pointsource if pointsource else PointSource()
+
+        # self.wfr.partBeam = Beam() if beam is None else beam
+
+        self.precisions = {'sampling': 0}
+
+    def __str__(self):
+        mesh = self.wfr.mesh
+        ps = self.pointsource
+        
+        if mesh.ne > 1:
+            e_str = f"[{mesh.eStart:.2f} - {mesh.eFin:.2f}] eV"
+        else:
+            e_str = f"{mesh.eStart:.2f} eV"
+
+        return (f"Point Source Radiation\n"
+                f"----------------------\n"
+                f"Distance: {mesh.zStart:.4f} m\n"
+                f"Energy:   {e_str}\n"
+                f"Origin:   (x={ps.x*1e6:.2f}, y={ps.y*1e6:.2f}) um\n"
+                f"Flux:     {ps.flux} ph/s/0.1%bw")
+
+    def __repr__(self):
+        return (f"PointRadiation(d={self.wfr.mesh.zStart}, "
+                f"flux={self.pointsource.flux}, pointsource={self.pointsource!r})")
+
+    def CalcElecField(self):
+        precisions = list(self.precisions.values())
+        srwl.CalcElecFieldPointSrc(self.wfr, self.pointsource, precisions)

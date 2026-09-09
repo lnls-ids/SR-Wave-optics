@@ -4,23 +4,21 @@
 from typing import Union, Optional, Literal
 
 import numpy as np
-import scipy.constants as cte
+import scipy.constants as const
 
 import srwpy.srwlib as srw
 import srwpy.srwlpy as srwl
 
 
 
-
-
-# MagnetCnt
-_Method = Literal['manual','undulator','bending']
-_CT = Union[list[float],tuple[float],Literal['length'],None]
-
+#todo: passar light_sources.py para ca, para cada classe. surge entao o problema do fieldmap, que poderia ser bending ou undulator e gostariamos de poder usar mesmas funcoes, ou nao?
 
 
 
 class Magnet:
+
+    def __init__(self):
+        self.srw_mag = srw.SRWLMagFld()
 
     @property
     def length(self):
@@ -37,7 +35,7 @@ class Magnet:
         E : float
             Accelerator energy [eV]
         """
-        E0 = cte.m_e*cte.c**2/cte.e # eV
+        E0 = const.m_e*const.c**2/const.e # eV
         gamma = E/E0
         return gamma
     
@@ -51,20 +49,14 @@ class Magnet:
         E : float
             Accelerator energy [eV]
         """
-        E0 = cte.m_e*cte.c**2/cte.e # eV
+        E0 = const.m_e*const.c**2/const.e # eV
         gamma = E/E0
         beta = 1-(1/(2*(gamma**2)))
         return beta
 
 
-
-
-
-
-
 # poder armazenar bending normal, FldM para poles=2, ou mapa de campo de bending
-# class BendingMagnet(srw.SRWLMagFldM):
-#todo: conferir se argumento _R faz sentido pra bending, caso nao, retirar args, kwargs
+#todo: conferir se argumento _R faz sentido pra bending (ver traj), caso nao, retirar args, kwargs
 class BendingMagnet(Magnet):
 
     def __init__(self, B:float, L:float, Ledge:float=0, *args, **kwargs):
@@ -106,17 +98,22 @@ class BendingMagnet(Magnet):
             Accelerator energy [eV]
         """
         gamma = self.calc_gamma(E)
-        rho = (gamma*cte.m_e)*cte.c/(cte.e*self.B)
-        wc = (3/2)*(cte.c/rho)*(gamma**3)
-        return cte.hbar*wc/cte.e
-    
-    
-
+        rho = (gamma*const.m_e)*const.c/(const.e*self.B)
+        wc = (3/2)*(const.c/rho)*(gamma**3)
+        return const.hbar*wc/const.e
 
 #todo: permitir configurar campos harmonicos
+#todo: theta default ser 0
+#todo: class method to init from B
 class Undulator(Magnet):
 
-    def __init__(self, period_length:float, nr_periods:int, Kv:float, Kh:float, settings:Optional[list]=None):
+    def __init__(self,
+            period_length: float,
+            nr_periods: int,
+            Ky: float,
+            Kx: float = 0,
+            settings: Optional[list] = None,
+        ):
         """
         Undulator magnetic field.
 
@@ -125,8 +122,9 @@ class Undulator(Magnet):
         period_length [m] : float
         nr_periods : int
             Number of periods.
-        Kh, Kv : float
-            Deflection parameters for vertical and horizontal planes, respectively.
+        Kx, Ky : float
+            Deflection parameters for horizontal and vertical planes,
+            respectively.
         settings: list or list of lists, optional
             Parameters to configurate harmonic magnetic fields:
             [0] plane ('h' or 'v')
@@ -138,13 +136,13 @@ class Undulator(Magnet):
 
         self._period_length = period_length
         self._nr_periods = nr_periods
-        self._K = np.array([Kh,Kv])
+        self._K = np.array([Kx, Ky])
 
-        Bv = self.K_to_B(period_length, Kv)
-        Bh = self.K_to_B(period_length, Kh)
+        By = self.K_to_B(period_length, Ky)
+        Bx = self.K_to_B(period_length, Kx)
         
-        self.fieldV = srw.SRWLMagFldH(_n=1,_h_or_v='v',_B=Bv)
-        self.fieldH = srw.SRWLMagFldH(_n=1,_h_or_v='h',_B=Bh)
+        self.fieldV = srw.SRWLMagFldH(_n=1,_h_or_v='v',_B=By)
+        self.fieldH = srw.SRWLMagFldH(_n=1,_h_or_v='h',_B=Bx)
 
         self.srw_mag = srw.SRWLMagFldU(_arHarm=[self.fieldV, self.fieldH],
                                        _per=period_length, _nPer=nr_periods)
@@ -162,7 +160,7 @@ class Undulator(Magnet):
     
     @property
     def K(self):
-        """Undulator deflection parameters [Kh,Kv]; [Kx,Ky]"""
+        """Undulator deflection parameters [Kx, Ky]"""
         return self._K
     
     @property
@@ -183,7 +181,7 @@ class Undulator(Magnet):
         B : float
             Undulator harmonic field amplitude [T]
         """
-        K = cte.e*B*period_length/(2*np.pi*cte.m_e*cte.c)
+        K = const.e*B*period_length/(2*np.pi*const.m_e*const.c)
         return K
     
     @staticmethod
@@ -198,7 +196,7 @@ class Undulator(Magnet):
         K : float
             Undulator harmonic field deflection parameter [adim]
         """
-        B = 2*np.pi*cte.m_e*cte.c*K/(cte.e*period_length)
+        B = 2*np.pi*const.m_e*const.c*K/(const.e*period_length)
         return B
     
     #todo: typing de harmn int or array like
@@ -221,6 +219,8 @@ class Undulator(Magnet):
         lambda : float | array_like
             Undulator harmonic wavelength [m]
         """
+        harmn = np.asarray(harmn)
+
         if np.any(harmn==0):
             raise ValueError("Energy or harmonic cannot be zero!")
     
@@ -250,7 +250,7 @@ class Undulator(Magnet):
             Undulator energy harmonic [eV]
         """
         lambda_n = self.harmonic_wavelength(harmn,E,theta)
-        energy_n = cte.h*cte.c/(lambda_n*cte.e)
+        energy_n = const.h*const.c/(lambda_n*const.e)
         return energy_n
     
     #todo: typing de harmn int or array like
@@ -267,10 +267,12 @@ class Undulator(Magnet):
         theta : float
             Observation angle with respect to undulator axis [rad]
         """
-        harmn1 = 1
-        energy1 = self.harmonic_energy(harmn1, E, theta)
-        return energy/energy1
+        energy = np.asarray(energy)
+        harmn_1 = 1
+        energy_1 = self.harmonic_energy(harmn_1, E, theta)
+        return energy/energy_1
     
+    #todo: rever
     def adjust_energy(self,energy,E,theta):
 
         harmn = self.energy_to_harmonic(energy,E,theta)
@@ -289,103 +291,6 @@ class Undulator(Magnet):
         energy = self.harmonic_energy(harmn,E,theta)
 
         return energy
-    
-
-
-
-
-# OBS: usando allocate para centros iguais a zero nao e' necessario escrever tal parte
-#todo: aceitar 0, 1 e 2 como field type tambem
-class MagnetCnt:
-
-    def __init__(self,
-            magnets:list[Magnet],
-            field_type:_Method,
-            centers=None,
-            axes=None,
-            angs=None
-        ):
-        """
-        Magnetic Field Container.
-
-        Parameters
-        ----------
-        magnets : list[Magnet]
-            List of magnetic elements.
-        centers : list[list|array], optional
-            List of center coordinates of each magnet in `magnets` [m]; format
-            is [xc,yc,zc].
-        axes : list[list|array], optional
-            List of axes unit vectors for each magnet in `magnets`; format
-            is [vx,vy,vz].
-        angs : list[float], optional
-            List of rotation angles with respect to the axes [rad].
-        field_type : {'manual', 'undulator', 'bending'}, optional
-            Synchrotron Radiation calculation method. Defaults to 'bending'.
-        """
-        self.magnets = magnets if magnets else []
-
-        N = len(magnets)
-        self.centers = centers if centers else 3*[N*[0]]
-        if axes:
-            axes = np.asarray(axes)
-            if not np.isclose(axes[0]**2+axes[1]**2+axes[2]**2,1):
-                raise ValueError("Axes must be unit vectors!")
-            else:
-                self.axes = axes
-        else:
-            self.axes = [N*[0],N*[0],N*[1]]
-        self.angs = angs if angs else np.zeros(N)
-
-        self.cnt = srw.SRWLMagFldC(
-            _arMagFld=self.srw_mags,
-            _arXc=self.centers[0],_arYc=self.centers[1],_arZc=self.centers[2],
-            _arVx=self.axes[0], _arVy=self.axes[1], _arVz=self.axes[2],
-            _arAng=self.angs
-        )
-
-        self.fieldtype = None
-
-        # SRW Synchrotron Radiation calculation method
-        idx_method = {'manual':0, 'undulator':1, 'bending':2}.get(field_type)
-        if idx_method:
-            self.fieldtype = idx_method
-        else:
-            raise ValueError("Invalid field type!")
-
-    @property
-    def srw_mags(self) -> list[srw.SRWLMagFld]:
-        """List of SRW magnetic fields in the container"""
-        return [magnet.srw_mag for magnet in self.magnets]
-
-
-
-    def calc_trajectory(self,
-            np=50000,
-            ctlim:_CT=None,
-            particle:Optional[srw.SRWLParticle]=None,
-            precisions=0
-        ) -> srw.SRWLPrtTrj:
-
-        ptraj = srw.SRWLPrtTrj(_np=np)
-
-        if particle:
-            ptraj.partInitCond = particle
-        else:
-            ptraj.partInitCond.gamma = 3/0.51099890221e-03
-
-        ptraj: srw.SRWLPrtTrj = srwl.CalcPartTraj(ptraj, self.cnt, precisions)
-
-        if isinstance(ctlim,(tuple,list)):
-            ptraj.ctStart, ptraj.ctEnd = ctlim
-        elif ctlim=='length':
-            mag = self.magnets[0]
-            ptraj.ctStart, ptraj.ctEnd = -mag.length/2, mag.length/2
-        else:
-            ptraj.ctStart, ptraj.ctEnd = ptraj.arZ[0], ptraj.arZ[-1]
-        
-        return ptraj
-
 
 
 #*: usar meshgrid 3D de arrays flat x, y, z para checar organizacao do return,
@@ -480,3 +385,113 @@ class FieldMap(Magnet):
     def get_field(self, x, y, z):
         # usar self._functional_field para avaliar campo nos pontos x, y, z
         pass
+
+
+
+
+
+_Magnets = Union[Magnet, list[Magnet]]
+_Method = Literal['manual', 'undulator', 'bending']
+_CT = Union[list[float], tuple[float], Literal['length'], None]
+
+
+class MagnetCnt:
+
+    def __init__(self,
+            magnets: _Magnets,
+            fieldtype: _Method,
+            centers=None,
+            axes=None,
+            angs=None
+        ):
+        """
+        Magnetic Field Container.
+
+        Parameters
+        ----------
+        magnets : list[Magnet]
+            List of magnetic elements.
+        fieldtype : {'manual', 'undulator', 'bending'}
+            Synchrotron Radiation calculation method.
+        centers : list[list|array], optional
+            List of center coordinates of each magnet in `magnets` [m]; format
+            is [xc,yc,zc].
+        axes : list[list|array], optional
+            List of axes unit vectors for each magnet in `magnets`; format
+            is [vx,vy,vz].
+        angs : list[float], optional
+            List of rotation angles with respect to the axes [rad].
+        """
+        if not isinstance(magnets, (list, tuple)):
+            magnets = [magnets]
+        self.magnets = magnets
+
+        # SRW synchrotron radiation calculation method
+        fieldtype_map = {
+            'manual': 0,
+            0: 0,
+            'undulator': 1,
+            1: 1,
+            'bending': 2,
+            2: 2
+        }
+        idx_method = fieldtype_map.get(fieldtype)
+        if not idx_method:
+            raise ValueError("Invalid field type!")
+        self.fieldtype = idx_method
+
+        N = len(magnets)
+
+        self.centers = centers or 3*[N*[0]]
+
+        if axes:
+            axes = np.asarray(axes)
+            axesnorm2 = axes[0]**2 + axes[1]**2 + axes[2]**2
+            if np.isclose(axesnorm2, 1):
+                self.axes = axes
+            else:
+                raise ValueError("Axes must be unit vectors!")
+        else:
+            self.axes = [N*[0], N*[0], N*[1]]
+
+        self.angs = angs or np.zeros(N)
+
+        self.cnt = srw.SRWLMagFldC(
+            self.srw_mags,
+            self.centers[0], self.centers[1], self.centers[2],
+            self.axes[0], self.axes[1], self.axes[2],
+            self.angs
+        )
+
+
+    @property
+    def srw_mags(self) -> list[srw.SRWLMagFld]:
+        """List of SRW magnetic fields in the container"""
+        return [magnet.srw_mag for magnet in self.magnets]
+
+
+    def calc_trajectory(self,
+            np=50000,
+            ctlim:_CT=None,
+            particle:Optional[srw.SRWLParticle]=None,
+            precisions=0
+        ) -> srw.SRWLPrtTrj:
+
+        ptraj = srw.SRWLPrtTrj(_np=np)
+
+        if particle:
+            ptraj.partInitCond = particle
+        else:
+            ptraj.partInitCond.gamma = 3/0.51099890221e-03
+
+        ptraj: srw.SRWLPrtTrj = srwl.CalcPartTraj(ptraj, self.cnt, precisions)
+
+        if isinstance(ctlim,(tuple,list)):
+            ptraj.ctStart, ptraj.ctEnd = ctlim
+        elif ctlim=='length':
+            mag = self.magnets[0]
+            ptraj.ctStart, ptraj.ctEnd = -mag.length/2, mag.length/2
+        else:
+            ptraj.ctStart, ptraj.ctEnd = ptraj.arZ[0], ptraj.arZ[-1]
+        
+        return ptraj

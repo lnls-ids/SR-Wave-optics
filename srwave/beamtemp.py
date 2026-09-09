@@ -17,6 +17,16 @@ _I = 100e-3 # current [A]
 _E = 3e9 # energy [eV]
 _gamma = _E/_E0 # lorentz factor [adim]
 
+#todo: class method load predefined beam, where each beam is stored at some json or even here
+#* NSLS-II Low Beta Final
+# accel energy 3 GeV
+# current 500 mA
+# rms delta 8.9e-4
+# emittancex 0.55 nm.rad
+# emittancey 0.008 nm.rad
+# betax 1.84 m
+# betay 1.17 m
+# null alphas, eta and etap
 
 class Beam(srw.SRWLPartBeam):
 
